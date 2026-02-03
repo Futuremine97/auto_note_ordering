@@ -212,19 +212,20 @@ h1 {
 
 .thumbs {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
 }
 
 figure {
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 figure img {
   width: 100%;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 14px;
   border: 1px solid var(--border);
@@ -245,8 +246,8 @@ figcaption {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 6px;
   align-items: center;
   margin-top: 8px;
 }
@@ -256,6 +257,7 @@ figcaption {
   border-radius: 10px;
   border: 1px solid var(--border);
   font-family: inherit;
+  width: 100%;
 }
 
 .actions button {
@@ -265,6 +267,7 @@ figcaption {
   color: #fff;
   padding: 8px 12px;
   cursor: pointer;
+  width: 100%;
 }
 
 .empty {
@@ -302,5 +305,9 @@ figcaption {
 
   .upload {
     width: 100%;
+  }
+
+  .thumbs {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   }
 }
