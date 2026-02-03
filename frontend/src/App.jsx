@@ -92,13 +92,17 @@ export default function App() {
     return `${book.title} · ${book.author_name}`;
   }
 
-  async function handlePredictAll() {
+  async function handlePredictAll(applyLabels = false) {
     setActionMessage("");
     setError("");
     const res = await fetch(`${API_BASE}/images/predict-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ only_unlabeled: true, apply_labels: false }),
+      body: JSON.stringify({
+        only_unlabeled: true,
+        apply_labels: applyLabels,
+        min_ratio: 1.2,
+      }),
     });
     if (!res.ok) {
       const message = await res.text();
@@ -106,7 +110,13 @@ export default function App() {
       return;
     }
     const data = await res.json();
-    setActionMessage(`전체 예측 완료 (${data.predicted}/${data.total})`);
+    if (applyLabels) {
+      setActionMessage(
+        `전체 예측 완료 (${data.predicted}/${data.total}) · 라벨 적용 ${data.applied_labels}건`
+      );
+    } else {
+      setActionMessage(`전체 예측 완료 (${data.predicted}/${data.total})`);
+    }
     await fetchRecords();
   }
 
@@ -260,8 +270,11 @@ export default function App() {
           ))}
         </div>
         <div className="bulk-actions">
-          <button type="button" onClick={handlePredictAll}>
+          <button type="button" onClick={() => handlePredictAll(false)}>
             전체 자동 분류(예측)
+          </button>
+          <button type="button" className="secondary" onClick={() => handlePredictAll(true)}>
+            전체 예측 + 라벨 적용
           </button>
         </div>
       </section>

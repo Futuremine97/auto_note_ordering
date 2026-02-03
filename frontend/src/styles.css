@@ -184,6 +184,8 @@ h1 {
 .bulk-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .bulk-actions button {
@@ -193,6 +195,12 @@ h1 {
   color: #fff;
   padding: 10px 14px;
   cursor: pointer;
+}
+
+.bulk-actions button.secondary {
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--border);
 }
 
 .card {
