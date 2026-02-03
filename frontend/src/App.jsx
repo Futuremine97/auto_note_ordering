@@ -52,6 +52,31 @@ function groupByBook(records, books) {
     });
 }
 
+function groupByCluster(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const key = record.cluster_id ?? "미분류";
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(record);
+  }
+
+  return [...groups.entries()]
+    .map(([key, items]) => ({
+      key,
+      label: key === "미분류" ? "미분류" : `클러스터 ${key}`,
+      items: sortByPage(items),
+    }))
+    .sort((a, b) => {
+      if (a.label === "미분류") return 1;
+      if (b.label === "미분류") return -1;
+      const aId = Number(a.key);
+      const bId = Number(b.key);
+      return aId - bId;
+    });
+}
+
 export default function App() {
   const [records, setRecords] = useState([]);
   const [books, setBooks] = useState([]);
@@ -59,8 +84,13 @@ export default function App() {
   const [error, setError] = useState("");
   const [bookForm, setBookForm] = useState({ title: "", author_name: "" });
   const [actionMessage, setActionMessage] = useState("");
+  const [viewMode, setViewMode] = useState("book");
 
-  const grouped = useMemo(() => groupByBook(records, books), [records, books]);
+  const grouped = useMemo(() => {
+    return viewMode === "cluster"
+      ? groupByCluster(records)
+      : groupByBook(records, books);
+  }, [records, books, viewMode]);
 
   async function fetchRecords() {
     const res = await fetch(`${API_BASE}/images`);
@@ -118,6 +148,27 @@ export default function App() {
       setActionMessage(`전체 예측 완료 (${data.predicted}/${data.total})`);
     }
     await fetchRecords();
+  }
+
+  async function handleCluster() {
+    setActionMessage("");
+    setError("");
+    const res = await fetch(`${API_BASE}/images/cluster`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold: 0.25 }),
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      setError(message || "클러스터링에 실패했습니다.");
+      return;
+    }
+    const data = await res.json();
+    setActionMessage(
+      `클러스터링 완료 (${data.clustered}/${data.total}, ${data.clusters}개 그룹)`
+    );
+    await fetchRecords();
+    setViewMode("cluster");
   }
 
   async function handleCreateBook(event) {
@@ -277,6 +328,27 @@ export default function App() {
             전체 예측 + 라벨 적용
           </button>
         </div>
+        <div className="view-actions">
+          <button type="button" className="secondary" onClick={handleCluster}>
+            이미지 클러스터링
+          </button>
+          <div className="toggle">
+            <button
+              type="button"
+              className={viewMode === "book" ? "active" : ""}
+              onClick={() => setViewMode("book")}
+            >
+              책/예측 기준
+            </button>
+            <button
+              type="button"
+              className={viewMode === "cluster" ? "active" : ""}
+              onClick={() => setViewMode("cluster")}
+            >
+              클러스터 기준
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="grid">
@@ -302,6 +374,9 @@ export default function App() {
                   <div className="meta">
                     <span>
                       페이지: {item.page_number ?? "미인식"}
+                    </span>
+                    <span>
+                      클러스터: {item.cluster_id ?? "미분류"}
                     </span>
                     <span>라벨: {resolveBookName(item.book_id)}</span>
                     <span>

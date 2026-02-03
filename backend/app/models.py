@@ -17,6 +17,7 @@ class ImageRecord(Base):
     predicted_book_id = Column(Integer, ForeignKey("books.id"), nullable=True, index=True)
     predicted_author = Column(String(255), nullable=True)
     predicted_score = Column(String(50), nullable=True)
+    cluster_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     book = relationship("Book", foreign_keys=[book_id])

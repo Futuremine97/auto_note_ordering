@@ -26,6 +26,8 @@ from .schemas import (
     TuneCandidate,
     BulkPredictRequest,
     BulkPredictResponse,
+    ClusterRequest,
+    ClusterResponse,
 )
 from .ngram import (
     build_model,
@@ -33,6 +35,7 @@ from .ngram import (
     deserialize_model,
     predict,
     build_symbol_vocab,
+    extract_ngrams,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -368,6 +371,64 @@ def predict_all_images(payload: BulkPredictRequest, db: Session = Depends(get_db
 @app.post("/images/predict-all", response_model=BulkPredictResponse)
 def predict_all_images_root(payload: BulkPredictRequest, db: Session = Depends(get_db)):
     return predict_all_images(payload=payload, db=db)
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    inter = a.intersection(b)
+    union = a.union(b)
+    return len(inter) / max(len(union), 1)
+
+
+@app.post("/api/images/cluster", response_model=ClusterResponse)
+def cluster_images(payload: ClusterRequest, db: Session = Depends(get_db)):
+    n_values = payload.n_values or [3, 4, 5]
+    threshold = payload.threshold or 0.25
+
+    query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
+    if payload.limit:
+        query = query.limit(payload.limit)
+    images = query.order_by(ImageRecord.id.asc()).all()
+
+    if not images:
+        raise HTTPException(status_code=400, detail="No OCR images to cluster")
+
+    clusters = []
+    next_cluster_id = 1
+    clustered = 0
+
+    for record in images:
+        grams = set(extract_ngrams(record.ocr_text or "", n_values))
+        if not grams:
+            record.cluster_id = None
+            continue
+
+        best_cluster = None
+        best_score = 0.0
+        for cluster in clusters:
+            score = _jaccard(grams, cluster["grams"])
+            if score > best_score:
+                best_score = score
+                best_cluster = cluster
+
+        if best_cluster and best_score >= threshold:
+            record.cluster_id = best_cluster["id"]
+            best_cluster["grams"].update(grams)
+        else:
+            record.cluster_id = next_cluster_id
+            clusters.append({"id": next_cluster_id, "grams": set(grams)})
+            next_cluster_id += 1
+
+        clustered += 1
+
+    db.commit()
+    return ClusterResponse(total=len(images), clustered=clustered, clusters=len(clusters))
+
+
+@app.post("/images/cluster", response_model=ClusterResponse)
+def cluster_images_root(payload: ClusterRequest, db: Session = Depends(get_db)):
+    return cluster_images(payload=payload, db=db)
 
 
 def retrain_all_books(db: Session, n_values: List[int]) -> None:

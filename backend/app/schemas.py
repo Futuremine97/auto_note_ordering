@@ -13,6 +13,7 @@ class ImageOut(BaseModel):
     predicted_book_id: Optional[int]
     predicted_author: Optional[str]
     predicted_score: Optional[str]
+    cluster_id: Optional[int]
     created_at: datetime
 
     class Config:
@@ -70,3 +71,15 @@ class BulkPredictResponse(BaseModel):
     total: int
     predicted: int
     applied_labels: int
+
+
+class ClusterRequest(BaseModel):
+    n_values: Optional[List[int]] = None
+    threshold: Optional[float] = 0.25
+    limit: Optional[int] = None
+
+
+class ClusterResponse(BaseModel):
+    total: int
+    clustered: int
+    clusters: int

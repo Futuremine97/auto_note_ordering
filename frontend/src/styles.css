@@ -203,6 +203,34 @@ h1 {
   border: 1px solid var(--border);
 }
 
+.view-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.toggle button {
+  border: none;
+  background: transparent;
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.toggle button.active {
+  background: var(--ink);
+  color: #fff;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
