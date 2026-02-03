@@ -1,3 +1,4 @@
+import io
 import json
 import random
 import uuid
@@ -9,6 +10,7 @@ from fastapi import Depends, FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from PIL import Image
 
 from .config import UPLOAD_DIR, OCR_WORKERS
 from .db import Base, engine, get_db
@@ -62,11 +64,22 @@ def upload_images(
 
     for file in files:
         suffix = Path(file.filename).suffix.lower()
-        stored_name = f"{uuid.uuid4().hex}{suffix}"
-        stored_path = UPLOAD_DIR / stored_name
-
-        with stored_path.open("wb") as f:
-            f.write(file.file.read())
+        if suffix in {".heic", ".heif"}:
+            try:
+                image = Image.open(io.BytesIO(file.file.read()))
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="HEIC 파일을 처리할 수 없습니다. JPG/PNG로 변환 후 업로드해주세요.",
+                ) from exc
+            stored_name = f"{uuid.uuid4().hex}.jpg"
+            stored_path = UPLOAD_DIR / stored_name
+            image.convert("RGB").save(stored_path, format="JPEG", quality=95)
+        else:
+            stored_name = f"{uuid.uuid4().hex}{suffix}"
+            stored_path = UPLOAD_DIR / stored_name
+            with stored_path.open("wb") as f:
+                f.write(file.file.read())
 
         pending.append(
             {

@@ -2,6 +2,13 @@ import re
 from typing import Iterable, List, Optional, Tuple
 
 from PIL import Image, ImageFilter, ImageOps
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except Exception:
+    # HEIF/HEIC support is optional; if unavailable, OCR will fail for those files.
+    pass
 import pytesseract
 
 from .config import TESSERACT_CMD, TESSERACT_LANG
