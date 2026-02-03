@@ -385,6 +385,7 @@ def _jaccard(a: set, b: set) -> float:
 def cluster_images(payload: ClusterRequest, db: Session = Depends(get_db)):
     n_values = payload.n_values or [3, 4, 5]
     threshold = payload.threshold or 0.25
+    max_clusters = 10
 
     query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
     if payload.limit:
@@ -416,6 +417,16 @@ def cluster_images(payload: ClusterRequest, db: Session = Depends(get_db)):
             record.cluster_id = best_cluster["id"]
             best_cluster["grams"].update(grams)
         else:
+            if len(clusters) >= max_clusters:
+                # Force assignment to closest cluster when max reached.
+                if best_cluster:
+                    record.cluster_id = best_cluster["id"]
+                    best_cluster["grams"].update(grams)
+                else:
+                    record.cluster_id = clusters[0]["id"]
+                    clusters[0]["grams"].update(grams)
+                clustered += 1
+                continue
             record.cluster_id = next_cluster_id
             clusters.append({"id": next_cluster_id, "grams": set(grams)})
             next_cluster_id += 1
