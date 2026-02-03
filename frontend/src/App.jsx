@@ -21,7 +21,12 @@ function groupByBook(records, books) {
 
   const groups = new Map();
   for (const record of records) {
-    const key = record.book_id ?? "미분류";
+    let key = "미분류";
+    if (record.book_id) {
+      key = `book_${record.book_id}`;
+    } else if (record.predicted_book_id) {
+      key = `pred_${record.predicted_book_id}`;
+    }
     if (!groups.has(key)) {
       groups.set(key, []);
     }
@@ -31,12 +36,18 @@ function groupByBook(records, books) {
   return [...groups.entries()]
     .map(([key, items]) => ({
       key,
-      label: key === "미분류" ? "미분류" : bookLabel(Number(key)),
+      label: key === "미분류"
+        ? "미분류"
+        : key.startsWith("pred_")
+          ? `예측: ${bookLabel(Number(key.replace("pred_", "")))}`
+          : bookLabel(Number(key.replace("book_", ""))),
       items: sortByPage(items),
     }))
     .sort((a, b) => {
       if (a.label === "미분류") return 1;
       if (b.label === "미분류") return -1;
+      if (a.label.startsWith("예측") && !b.label.startsWith("예측")) return 1;
+      if (!a.label.startsWith("예측") && b.label.startsWith("예측")) return -1;
       return a.label.localeCompare(b.label);
     });
 }
@@ -79,6 +90,24 @@ export default function App() {
     const book = books.find((item) => item.id === bookId);
     if (!book) return "미분류";
     return `${book.title} · ${book.author_name}`;
+  }
+
+  async function handlePredictAll() {
+    setActionMessage("");
+    setError("");
+    const res = await fetch(`${API_BASE}/images/predict-all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ only_unlabeled: true, apply_labels: false }),
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      setError(message || "전체 예측에 실패했습니다.");
+      return;
+    }
+    const data = await res.json();
+    setActionMessage(`전체 예측 완료 (${data.predicted}/${data.total})`);
+    await fetchRecords();
   }
 
   async function handleCreateBook(event) {
@@ -229,6 +258,11 @@ export default function App() {
               </button>
             </div>
           ))}
+        </div>
+        <div className="bulk-actions">
+          <button type="button" onClick={handlePredictAll}>
+            전체 자동 분류(예측)
+          </button>
         </div>
       </section>
 

@@ -57,3 +57,16 @@ class TuneCandidate(BaseModel):
 class TuneResponse(BaseModel):
     best: TuneCandidate
     candidates: List[TuneCandidate]
+
+
+class BulkPredictRequest(BaseModel):
+    only_unlabeled: Optional[bool] = True
+    apply_labels: Optional[bool] = False
+    min_ratio: Optional[float] = 1.15
+    limit: Optional[int] = None
+
+
+class BulkPredictResponse(BaseModel):
+    total: int
+    predicted: int
+    applied_labels: int

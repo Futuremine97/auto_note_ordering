@@ -24,6 +24,8 @@ from .schemas import (
     TuneRequest,
     TuneResponse,
     TuneCandidate,
+    BulkPredictRequest,
+    BulkPredictResponse,
 )
 from .ngram import (
     build_model,
@@ -308,6 +310,64 @@ def predict_image(image_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(record)
     return record
+
+
+@app.post("/api/images/predict-all", response_model=BulkPredictResponse)
+def predict_all_images(payload: BulkPredictRequest, db: Session = Depends(get_db)):
+    books = db.query(Book).filter(Book.model_json.isnot(None)).all()
+    if not books:
+        raise HTTPException(status_code=400, detail="No trained models available")
+
+    models = {book.id: deserialize_model(book.model_json) for book in books}
+    config = get_ngram_config(db)
+    global_vocab = get_global_vocab(db, config["n_values"])
+
+    query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
+    if payload.only_unlabeled:
+        query = query.filter(ImageRecord.book_id.is_(None))
+    if payload.limit:
+        query = query.limit(payload.limit)
+    images = query.all()
+
+    predicted = 0
+    applied = 0
+    for record in images:
+        results = predict(
+            record.ocr_text,
+            models,
+            vocab_override=global_vocab or None,
+            alpha=config["alpha"],
+        )
+        if not results:
+            continue
+        best = results[0]
+        best_book = db.query(Book).filter(Book.id == best["book_id"]).first()
+        record.predicted_book_id = best_book.id if best_book else None
+        record.predicted_author = best_book.author_name if best_book else None
+        record.predicted_score = f"ppl={best['perplexity']:.4f}"
+        predicted += 1
+
+        if payload.apply_labels and best_book:
+            if len(results) == 1:
+                record.book_id = best_book.id
+                applied += 1
+            else:
+                ratio = results[1]["perplexity"] / max(best["perplexity"], 1e-6)
+                if ratio >= (payload.min_ratio or 1.15):
+                    record.book_id = best_book.id
+                    applied += 1
+
+    db.commit()
+    return BulkPredictResponse(
+        total=len(images),
+        predicted=predicted,
+        applied_labels=applied,
+    )
+
+
+@app.post("/images/predict-all", response_model=BulkPredictResponse)
+def predict_all_images_root(payload: BulkPredictRequest, db: Session = Depends(get_db)):
+    return predict_all_images(payload=payload, db=db)
 
 
 def retrain_all_books(db: Session, n_values: List[int]) -> None:
