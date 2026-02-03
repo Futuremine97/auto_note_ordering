@@ -1,6 +1,7 @@
 import json
 import random
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
@@ -9,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from .config import UPLOAD_DIR
+from .config import UPLOAD_DIR, OCR_WORKERS
 from .db import Base, engine, get_db
 from .models import ImageRecord, Book, NgramVocab
 from .ocr import run_ocr, detect_page_number_from_regions, extract_page_number
@@ -57,6 +58,7 @@ def upload_images(
         raise HTTPException(status_code=400, detail="No files uploaded")
 
     records: List[ImageRecord] = []
+    pending = []
 
     for file in files:
         suffix = Path(file.filename).suffix.lower()
@@ -66,14 +68,38 @@ def upload_images(
         with stored_path.open("wb") as f:
             f.write(file.file.read())
 
-        ocr_text = run_ocr(str(stored_path))
+        pending.append(
+            {
+                "original_filename": file.filename,
+                "stored_filename": stored_name,
+                "stored_path": stored_path,
+            }
+        )
+
+    def process_one(item):
+        ocr_text = run_ocr(str(item["stored_path"]))
         page_number = extract_page_number(ocr_text)
         if page_number is None:
-            page_number = detect_page_number_from_regions(str(stored_path))
+            page_number = detect_page_number_from_regions(str(item["stored_path"]))
+        return ocr_text, page_number
 
+    worker_count = max(1, min(OCR_WORKERS, len(pending)))
+    results = {}
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {executor.submit(process_one, item): item for item in pending}
+        for future in as_completed(future_map):
+            item = future_map[future]
+            try:
+                ocr_text, page_number = future.result()
+            except Exception:
+                ocr_text, page_number = "", None
+            results[item["stored_filename"]] = (ocr_text, page_number)
+
+    for item in pending:
+        ocr_text, page_number = results.get(item["stored_filename"], ("", None))
         record = ImageRecord(
-            original_filename=file.filename,
-            stored_filename=stored_name,
+            original_filename=item["original_filename"],
+            stored_filename=item["stored_filename"],
             page_number=page_number,
             ocr_text=ocr_text,
         )
