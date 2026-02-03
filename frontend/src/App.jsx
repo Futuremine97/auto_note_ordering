@@ -150,13 +150,18 @@ export default function App() {
     await fetchRecords();
   }
 
-  async function handleCluster() {
+  async function handleCluster(applyLabels = false) {
     setActionMessage("");
     setError("");
     const res = await fetch(`${API_BASE}/images/cluster`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold: 0.25 }),
+      body: JSON.stringify({
+        threshold: 0.25,
+        apply_labels: applyLabels,
+        min_ratio: 0.6,
+        min_votes: 2,
+      }),
     });
     if (!res.ok) {
       const message = await res.text();
@@ -164,9 +169,15 @@ export default function App() {
       return;
     }
     const data = await res.json();
-    setActionMessage(
-      `클러스터링 완료 (${data.clustered}/${data.total}, ${data.clusters}개 그룹)`
-    );
+    if (applyLabels) {
+      setActionMessage(
+        `클러스터링 완료 (${data.clustered}/${data.total}, ${data.clusters}개 그룹) · 라벨 적용 ${data.applied_labels}건`
+      );
+    } else {
+      setActionMessage(
+        `클러스터링 완료 (${data.clustered}/${data.total}, ${data.clusters}개 그룹)`
+      );
+    }
     await fetchRecords();
     setViewMode("cluster");
   }
@@ -329,8 +340,11 @@ export default function App() {
           </button>
         </div>
         <div className="view-actions">
-          <button type="button" className="secondary" onClick={handleCluster}>
+          <button type="button" className="secondary" onClick={() => handleCluster(false)}>
             이미지 클러스터링
+          </button>
+          <button type="button" onClick={() => handleCluster(true)}>
+            클러스터 라벨 적용
           </button>
           <div className="toggle">
             <button

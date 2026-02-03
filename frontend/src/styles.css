@@ -211,6 +211,21 @@ h1 {
   flex-wrap: wrap;
 }
 
+.view-actions button {
+  border: none;
+  border-radius: 12px;
+  background: #1d1a16;
+  color: #fff;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.view-actions button.secondary {
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
 .toggle {
   display: inline-flex;
   border: 1px solid var(--border);

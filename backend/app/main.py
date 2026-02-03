@@ -422,8 +422,40 @@ def cluster_images(payload: ClusterRequest, db: Session = Depends(get_db)):
 
         clustered += 1
 
+    applied = 0
+    if payload.apply_labels:
+        cluster_map = {}
+        for record in images:
+            if record.cluster_id is None:
+                continue
+            cluster_map.setdefault(record.cluster_id, []).append(record)
+
+        for cluster_id, items in cluster_map.items():
+            counts = {}
+            for item in items:
+                if item.predicted_book_id:
+                    counts[item.predicted_book_id] = counts.get(item.predicted_book_id, 0) + 1
+
+            if not counts:
+                continue
+
+            best_book_id, best_count = max(counts.items(), key=lambda it: it[1])
+            ratio = best_count / max(len(items), 1)
+            if best_count < (payload.min_votes or 2) or ratio < (payload.min_ratio or 0.6):
+                continue
+
+            for item in items:
+                if payload.overwrite or item.book_id is None:
+                    item.book_id = best_book_id
+                    applied += 1
+
     db.commit()
-    return ClusterResponse(total=len(images), clustered=clustered, clusters=len(clusters))
+    return ClusterResponse(
+        total=len(images),
+        clustered=clustered,
+        clusters=len(clusters),
+        applied_labels=applied,
+    )
 
 
 @app.post("/images/cluster", response_model=ClusterResponse)

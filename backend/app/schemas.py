@@ -77,9 +77,14 @@ class ClusterRequest(BaseModel):
     n_values: Optional[List[int]] = None
     threshold: Optional[float] = 0.25
     limit: Optional[int] = None
+    apply_labels: Optional[bool] = False
+    min_ratio: Optional[float] = 0.6
+    min_votes: Optional[int] = 2
+    overwrite: Optional[bool] = False
 
 
 class ClusterResponse(BaseModel):
     total: int
     clustered: int
     clusters: int
+    applied_labels: int
