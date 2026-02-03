@@ -34,7 +34,7 @@ npm run dev
 기본 API 주소는 `http://localhost:8000`입니다.
 
 ## 공개 배포 (Nginx + HTTPS + 도메인)
-도메인: `quantum-park.com`
+도메인: `your-domain.com`
 
 ### 1) DNS 설정
 도메인 관리 페이지에서 다음 A 레코드를 추가하세요.
@@ -57,7 +57,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 ### 4) HTTPS 설정 (Let’s Encrypt)
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d quantum-park.com -d www.quantum-park.com
+sudo certbot --nginx -d your-domain.com -d www.your-domain.com
 ```
 
 인증서 자동 갱신 확인:
@@ -89,6 +89,12 @@ Tesseract 경로가 PATH에 없으면 `backend/.env`에 `TESSERACT_CMD`를 지�
 
 ## 환경 변수
 `backend/.env.example` 참고
+
+### 프로덕션용 환경 변수 (.env)
+배포 서버에서 아래 예시를 참고해 `.env`를 만들고 **강력한 비밀번호로 변경**하세요.
+```bash
+cp .env.example .env
+```
 
 ## 책별 저자 분류 (n-gram)
 OCR 텍스트를 책별로 라벨링한 뒤 n-gram 모델로 분류합니다.
