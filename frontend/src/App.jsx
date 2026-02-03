@@ -2,20 +2,43 @@ import { useEffect, useMemo, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
-function groupByPage(records) {
+function sortByPage(items) {
+  return [...items].sort((a, b) => {
+    if (a.page_number == null && b.page_number == null) return a.id - b.id;
+    if (a.page_number == null) return 1;
+    if (b.page_number == null) return -1;
+    if (a.page_number === b.page_number) return a.id - b.id;
+    return a.page_number - b.page_number;
+  });
+}
+
+function groupByBook(records, books) {
+  const bookLabel = (bookId) => {
+    const book = books.find((item) => item.id === bookId);
+    if (!book) return "미분류";
+    return `${book.title} · ${book.author_name}`;
+  };
+
   const groups = new Map();
   for (const record of records) {
-    const key = record.page_number ?? "미인식";
+    const key = record.book_id ?? "미분류";
     if (!groups.has(key)) {
       groups.set(key, []);
     }
     groups.get(key).push(record);
   }
-  return [...groups.entries()].sort((a, b) => {
-    if (a[0] === "미인식") return 1;
-    if (b[0] === "미인식") return -1;
-    return Number(a[0]) - Number(b[0]);
-  });
+
+  return [...groups.entries()]
+    .map(([key, items]) => ({
+      key,
+      label: key === "미분류" ? "미분류" : bookLabel(Number(key)),
+      items: sortByPage(items),
+    }))
+    .sort((a, b) => {
+      if (a.label === "미분류") return 1;
+      if (b.label === "미분류") return -1;
+      return a.label.localeCompare(b.label);
+    });
 }
 
 export default function App() {
@@ -26,7 +49,7 @@ export default function App() {
   const [bookForm, setBookForm] = useState({ title: "", author_name: "" });
   const [actionMessage, setActionMessage] = useState("");
 
-  const grouped = useMemo(() => groupByPage(records), [records]);
+  const grouped = useMemo(() => groupByBook(records, books), [records, books]);
 
   async function fetchRecords() {
     const res = await fetch(`${API_BASE}/images`);
@@ -214,14 +237,14 @@ export default function App() {
           <div className="empty">아직 업로드된 이미지가 없습니다.</div>
         )}
 
-        {grouped.map(([page, items]) => (
-          <div key={page} className="card">
+        {grouped.map((group) => (
+          <div key={group.key} className="card">
             <div className="card-header">
-              <span className="tag">페이지 {page}</span>
-              <span className="count">{items.length}장</span>
+              <span className="tag">{group.label}</span>
+              <span className="count">{group.items.length}장</span>
             </div>
             <div className="thumbs">
-              {items.map((item) => (
+              {group.items.map((item) => (
                 <figure key={item.id}>
                   <img
                     src={`${API_BASE}/images/${item.id}/file`}
@@ -230,6 +253,9 @@ export default function App() {
                   />
                   <figcaption>{item.original_filename}</figcaption>
                   <div className="meta">
+                    <span>
+                      페이지: {item.page_number ?? "미인식"}
+                    </span>
                     <span>라벨: {resolveBookName(item.book_id)}</span>
                     <span>
                       예측:{" "}

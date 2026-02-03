@@ -31,3 +31,12 @@ class Book(Base):
     author_name = Column(String(255), nullable=False)
     model_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class NgramVocab(Base):
+    __tablename__ = "ngram_vocab"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vocab_json = Column(Text, nullable=True)
+    config_json = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -37,3 +37,23 @@ class BookOut(BaseModel):
 
 class ImageAssign(BaseModel):
     book_id: Optional[int]
+
+
+class TuneRequest(BaseModel):
+    n_values_options: Optional[List[List[int]]] = None
+    alphas: Optional[List[float]] = None
+    train_ratio: Optional[float] = 0.8
+    random_seed: Optional[int] = 42
+
+
+class TuneCandidate(BaseModel):
+    n_values: List[int]
+    alpha: float
+    accuracy: float
+    avg_perplexity: float
+    samples: int
+
+
+class TuneResponse(BaseModel):
+    best: TuneCandidate
+    candidates: List[TuneCandidate]

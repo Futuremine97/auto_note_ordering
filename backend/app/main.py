@@ -1,3 +1,5 @@
+import json
+import random
 import uuid
 from pathlib import Path
 from typing import List
@@ -9,9 +11,17 @@ from sqlalchemy.orm import Session
 
 from .config import UPLOAD_DIR
 from .db import Base, engine, get_db
-from .models import ImageRecord, Book
+from .models import ImageRecord, Book, NgramVocab
 from .ocr import run_ocr, detect_page_number_from_regions, extract_page_number
-from .schemas import ImageOut, BookCreate, BookOut, ImageAssign
+from .schemas import (
+    ImageOut,
+    BookCreate,
+    BookOut,
+    ImageAssign,
+    TuneRequest,
+    TuneResponse,
+    TuneCandidate,
+)
 from .ngram import build_model, serialize_model, deserialize_model, predict
 
 Base.metadata.create_all(bind=engine)
@@ -111,6 +121,52 @@ def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     return book
 
 
+def get_global_vocab(db: Session) -> set:
+    entry = db.query(NgramVocab).filter(NgramVocab.id == 1).first()
+    if not entry or not entry.vocab_json:
+        return set()
+    try:
+        return set(json.loads(entry.vocab_json))
+    except json.JSONDecodeError:
+        return set()
+
+
+def save_global_vocab(db: Session, vocab: set) -> None:
+    payload = json.dumps(sorted(vocab))
+    entry = db.query(NgramVocab).filter(NgramVocab.id == 1).first()
+    if entry is None:
+        entry = NgramVocab(id=1, vocab_json=payload)
+        db.add(entry)
+    else:
+        entry.vocab_json = payload
+    db.commit()
+
+
+def get_ngram_config(db: Session) -> dict:
+    entry = db.query(NgramVocab).filter(NgramVocab.id == 1).first()
+    if not entry or not entry.config_json:
+        return {"n_values": [3, 4, 5], "alpha": 1.0}
+    try:
+        data = json.loads(entry.config_json)
+        return {
+            "n_values": data.get("n_values", [3, 4, 5]),
+            "alpha": float(data.get("alpha", 1.0)),
+        }
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {"n_values": [3, 4, 5], "alpha": 1.0}
+
+
+def save_ngram_config(db: Session, config: dict) -> None:
+    payload = json.dumps(config)
+    entry = db.query(NgramVocab).filter(NgramVocab.id == 1).first()
+    if entry is None:
+        entry = NgramVocab(id=1, config_json=payload)
+        db.add(entry)
+    else:
+        entry.config_json = payload
+    db.commit()
+
+
 @app.post("/api/books", response_model=BookOut)
 def create_book_api(payload: BookCreate, db: Session = Depends(get_db)):
     return create_book(payload=payload, db=db)
@@ -158,8 +214,12 @@ def train_book(book_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No OCR text to train on")
 
     texts = [img.ocr_text for img in images if img.ocr_text]
-    model = build_model(texts, n_values=[3, 4, 5])
+    config = get_ngram_config(db)
+    model = build_model(texts, n_values=config["n_values"])
     book.model_json = serialize_model(model)
+    global_vocab = get_global_vocab(db)
+    global_vocab.update(model["counts"].keys())
+    save_global_vocab(db, global_vocab)
     db.commit()
     db.refresh(book)
     return book
@@ -180,7 +240,14 @@ def predict_image(image_id: int, db: Session = Depends(get_db)):
 
     books = db.query(Book).filter(Book.model_json.isnot(None)).all()
     models = {book.id: deserialize_model(book.model_json) for book in books}
-    results = predict(record.ocr_text, models)
+    config = get_ngram_config(db)
+    global_vocab = get_global_vocab(db)
+    results = predict(
+        record.ocr_text,
+        models,
+        vocab_override=global_vocab or None,
+        alpha=config["alpha"],
+    )
     if not results:
         raise HTTPException(status_code=400, detail="No trained models available")
 
@@ -188,10 +255,122 @@ def predict_image(image_id: int, db: Session = Depends(get_db)):
     best_book = db.query(Book).filter(Book.id == best["book_id"]).first()
     record.predicted_book_id = best_book.id if best_book else None
     record.predicted_author = best_book.author_name if best_book else None
-    record.predicted_score = f"{best['score']:.4f}"
+    record.predicted_score = f"ppl={best['perplexity']:.4f}"
     db.commit()
     db.refresh(record)
     return record
+
+
+def retrain_all_books(db: Session, n_values: List[int]) -> None:
+    books = db.query(Book).all()
+    global_vocab = set()
+    for book in books:
+        images = (
+            db.query(ImageRecord)
+            .filter(ImageRecord.book_id == book.id)
+            .filter(ImageRecord.ocr_text.isnot(None))
+            .all()
+        )
+        texts = [img.ocr_text for img in images if img.ocr_text]
+        if not texts:
+            continue
+        model = build_model(texts, n_values=n_values)
+        book.model_json = serialize_model(model)
+        global_vocab.update(model["counts"].keys())
+    save_global_vocab(db, global_vocab)
+    db.commit()
+
+
+@app.post("/api/ngram/tune", response_model=TuneResponse)
+def tune_ngram(payload: TuneRequest, db: Session = Depends(get_db)):
+    n_values_options = payload.n_values_options or [[3, 4, 5], [2, 3, 4, 5], [3, 4]]
+    alphas = payload.alphas or [0.5, 1.0, 1.5]
+    train_ratio = payload.train_ratio or 0.8
+    rng = random.Random(payload.random_seed or 42)
+
+    labeled = {}
+    books = db.query(Book).all()
+    for book in books:
+        images = (
+            db.query(ImageRecord)
+            .filter(ImageRecord.book_id == book.id)
+            .filter(ImageRecord.ocr_text.isnot(None))
+            .all()
+        )
+        texts = [img.ocr_text for img in images if img.ocr_text]
+        if len(texts) >= 2:
+            labeled[book.id] = texts
+
+    if len(labeled) < 2:
+        raise HTTPException(status_code=400, detail="Not enough labeled books to tune")
+
+    candidates: List[TuneCandidate] = []
+    best_candidate = None
+
+    for n_values in n_values_options:
+        for alpha in alphas:
+            models = {}
+            test_set = []
+            for book_id, texts in labeled.items():
+                items = texts[:]
+                rng.shuffle(items)
+                split = max(1, int(len(items) * train_ratio))
+                train_texts = items[:split]
+                test_texts = items[split:] or items[-1:]
+                models[book_id] = build_model(train_texts, n_values=n_values)
+                for text in test_texts:
+                    test_set.append((book_id, text))
+
+            vocab = set()
+            for model in models.values():
+                vocab.update(model["counts"].keys())
+            vocab_size = max(len(vocab), 1)
+
+            correct = 0
+            total = 0
+            ppl_sum = 0.0
+            for book_id, text in test_set:
+                results = predict(text, models, vocab_override=vocab, alpha=alpha)
+                if not results:
+                    continue
+                total += 1
+                if results[0]["book_id"] == book_id:
+                    correct += 1
+                # perplexity for true book
+                true = next((r for r in results if r["book_id"] == book_id), None)
+                if true:
+                    ppl_sum += true["perplexity"]
+
+            accuracy = correct / total if total else 0.0
+            avg_ppl = ppl_sum / total if total else float("inf")
+            candidate = TuneCandidate(
+                n_values=n_values,
+                alpha=alpha,
+                accuracy=accuracy,
+                avg_perplexity=avg_ppl,
+                samples=total,
+            )
+            candidates.append(candidate)
+            if best_candidate is None:
+                best_candidate = candidate
+            else:
+                if candidate.accuracy > best_candidate.accuracy:
+                    best_candidate = candidate
+                elif candidate.accuracy == best_candidate.accuracy and candidate.avg_perplexity < best_candidate.avg_perplexity:
+                    best_candidate = candidate
+
+    if best_candidate is None:
+        raise HTTPException(status_code=400, detail="Tuning failed")
+
+    save_ngram_config(db, {"n_values": best_candidate.n_values, "alpha": best_candidate.alpha})
+    retrain_all_books(db, n_values=best_candidate.n_values)
+
+    return TuneResponse(best=best_candidate, candidates=candidates)
+
+
+@app.post("/ngram/tune", response_model=TuneResponse)
+def tune_ngram_root(payload: TuneRequest, db: Session = Depends(get_db)):
+    return tune_ngram(payload=payload, db=db)
 
 
 @app.post("/api/images/{image_id}/predict", response_model=ImageOut)

@@ -99,6 +99,27 @@ cp .env.example .env
 ## 책별 저자 분류 (n-gram)
 OCR 텍스트를 책별로 라벨링한 뒤 n-gram 모델로 분류합니다.
 
+### 누적 vocab
+책을 학습할 때마다 전체 n-gram vocab을 DB에 누적 저장하고, 예측 시에도
+이 vocab 크기를 사용해 스무딩을 안정화합니다.
+
+### Perplexity 기반 분류 + 하이퍼파라미터 튜닝
+라벨링된 기존 OCR 텍스트로 n-gram 후보들을 평가하고, **perplexity**가 낮고
+정확도가 높은 설정을 선택합니다.
+
+```bash
+curl -X POST http://localhost:8000/api/ngram/tune \
+  -H "Content-Type: application/json" \
+  -d '{
+    "n_values_options": [[3,4,5],[2,3,4,5],[3,4]],
+    "alphas": [0.5, 1.0, 1.5],
+    "train_ratio": 0.8,
+    "random_seed": 42
+  }'
+```
+
+선택된 하이퍼파라미터는 DB에 저장되며, 모든 책 모델을 재학습합니다.
+
 ### 흐름
 1. 책 등록
 2. 이미지에 책 ID 라벨 지정
