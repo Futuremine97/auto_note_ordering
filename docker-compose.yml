@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    container_name: page_ocr_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: page_ocr
+    ports:
+      - "5432:5432"
+    volumes:
+      - page_ocr_data:/var/lib/postgresql/data
+volumes:
+  page_ocr_data:

@@ -1,0 +1,38 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    container_name: page_ocr_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: page_ocr
+    volumes:
+      - page_ocr_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    container_name: page_ocr_backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/page_ocr
+      UPLOAD_DIR: /data/uploads
+      TESSERACT_LANG: eng+kor
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      - db
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: page_ocr_nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  page_ocr_data:
+  uploads:
