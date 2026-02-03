@@ -2,7 +2,7 @@ import json
 import random
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +22,13 @@ from .schemas import (
     TuneResponse,
     TuneCandidate,
 )
-from .ngram import build_model, serialize_model, deserialize_model, predict
+from .ngram import (
+    build_model,
+    serialize_model,
+    deserialize_model,
+    predict,
+    build_symbol_vocab,
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -121,14 +127,18 @@ def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     return book
 
 
-def get_global_vocab(db: Session) -> set:
+def get_global_vocab(db: Session, n_values: Optional[List[int]] = None) -> set:
     entry = db.query(NgramVocab).filter(NgramVocab.id == 1).first()
     if not entry or not entry.vocab_json:
-        return set()
-    try:
-        return set(json.loads(entry.vocab_json))
-    except json.JSONDecodeError:
-        return set()
+        vocab = set()
+    else:
+        try:
+            vocab = set(json.loads(entry.vocab_json))
+        except json.JSONDecodeError:
+            vocab = set()
+    if n_values:
+        vocab.update(build_symbol_vocab(n_values))
+    return vocab
 
 
 def save_global_vocab(db: Session, vocab: set) -> None:
@@ -217,7 +227,7 @@ def train_book(book_id: int, db: Session = Depends(get_db)):
     config = get_ngram_config(db)
     model = build_model(texts, n_values=config["n_values"])
     book.model_json = serialize_model(model)
-    global_vocab = get_global_vocab(db)
+    global_vocab = get_global_vocab(db, config["n_values"])
     global_vocab.update(model["counts"].keys())
     save_global_vocab(db, global_vocab)
     db.commit()
@@ -241,7 +251,7 @@ def predict_image(image_id: int, db: Session = Depends(get_db)):
     books = db.query(Book).filter(Book.model_json.isnot(None)).all()
     models = {book.id: deserialize_model(book.model_json) for book in books}
     config = get_ngram_config(db)
-    global_vocab = get_global_vocab(db)
+    global_vocab = get_global_vocab(db, config["n_values"])
     results = predict(
         record.ocr_text,
         models,
@@ -277,6 +287,7 @@ def retrain_all_books(db: Session, n_values: List[int]) -> None:
         model = build_model(texts, n_values=n_values)
         book.model_json = serialize_model(model)
         global_vocab.update(model["counts"].keys())
+    global_vocab.update(build_symbol_vocab(n_values))
     save_global_vocab(db, global_vocab)
     db.commit()
 
@@ -324,6 +335,7 @@ def tune_ngram(payload: TuneRequest, db: Session = Depends(get_db)):
             vocab = set()
             for model in models.values():
                 vocab.update(model["counts"].keys())
+            vocab.update(build_symbol_vocab(n_values))
             vocab_size = max(len(vocab), 1)
 
             correct = 0

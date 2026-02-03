@@ -19,6 +19,53 @@ def extract_ngrams(text: str, n_values: Iterable[int]) -> List[str]:
     return ngrams
 
 
+MATH_SYMBOLS = [
+    "+",
+    "-",
+    "*",
+    "/",
+    "=",
+    "<",
+    ">",
+    "≤",
+    "≥",
+    "≠",
+    "±",
+    "×",
+    "÷",
+    "√",
+    "∑",
+    "∏",
+    "∫",
+    "π",
+    "∞",
+    "∂",
+    "∇",
+    "∈",
+    "∉",
+    "⊂",
+    "⊃",
+    "⊆",
+    "⊇",
+    "∧",
+    "∨",
+    "∩",
+    "∪",
+    "→",
+    "←",
+    "↔",
+    "⇒",
+    "⇔",
+    "≈",
+    "≡",
+]
+
+
+def build_symbol_vocab(n_values: Iterable[int]) -> Set[str]:
+    seed = "".join(MATH_SYMBOLS)
+    return set(extract_ngrams(seed, n_values))
+
+
 def build_model(texts: List[str], n_values: Iterable[int]) -> Dict:
     counts = Counter()
     total = 0

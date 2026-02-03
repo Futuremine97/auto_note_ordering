@@ -14,4 +14,4 @@ DATABASE_URL = os.getenv(
 )
 
 TESSERACT_CMD = os.getenv("TESSERACT_CMD")
-TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng")
+TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng+kor+jpn")
