@@ -88,3 +88,32 @@ class ClusterResponse(BaseModel):
     clustered: int
     clusters: int
     applied_labels: int
+
+
+class LlmMessage(BaseModel):
+    role: str
+    content: str
+
+
+class LlmDiscussRequest(BaseModel):
+    prompt: str
+    include_all_images: Optional[bool] = True
+    include_images: Optional[bool] = False
+    max_images: Optional[int] = None
+    image_ids: Optional[List[int]] = None
+    messages: Optional[List[LlmMessage]] = None
+
+
+class LlmDiscussResponse(BaseModel):
+    answer: str
+    used_images: int
+    ocr_chars: int
+    included_images: int
+
+
+class AuthLogin(BaseModel):
+    password: str
+
+
+class AuthStatus(BaseModel):
+    authenticated: bool

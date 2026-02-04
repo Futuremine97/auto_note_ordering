@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, UploadFile, HTTPException
+from fastapi import Depends, FastAPI, File, UploadFile, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -28,6 +28,10 @@ from .schemas import (
     BulkPredictResponse,
     ClusterRequest,
     ClusterResponse,
+    LlmDiscussRequest,
+    LlmDiscussResponse,
+    AuthLogin,
+    AuthStatus,
 )
 from .ngram import (
     build_model,
@@ -37,6 +41,9 @@ from .ngram import (
     build_symbol_vocab,
     extract_ngrams,
 )
+from .llm import build_ocr_context, build_image_payloads, call_llm
+from .auth import AUTH_COOKIE_NAME, create_auth_cookie, require_auth, verify_auth_cookie
+from .config import AUTH_COOKIE_SECURE, AUTH_COOKIE_TTL_HOURS, PHOTO_PASSWORD
 
 Base.metadata.create_all(bind=engine)
 
@@ -54,6 +61,38 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/auth/status", response_model=AuthStatus)
+def auth_status(request: Request):
+    if not PHOTO_PASSWORD:
+        return AuthStatus(authenticated=True)
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    return AuthStatus(authenticated=bool(token and verify_auth_cookie(token)))
+
+
+@app.post("/api/auth/login", response_model=AuthStatus)
+def auth_login(payload: AuthLogin, response: Response):
+    if not PHOTO_PASSWORD:
+        return AuthStatus(authenticated=True)
+    if payload.password != PHOTO_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid password")
+    token = create_auth_cookie()
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="Lax",
+        max_age=AUTH_COOKIE_TTL_HOURS * 3600,
+    )
+    return AuthStatus(authenticated=True)
+
+
+@app.post("/api/auth/logout", response_model=AuthStatus)
+def auth_logout(response: Response):
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return AuthStatus(authenticated=False)
 
 
 @app.post("/upload", response_model=List[ImageOut])
@@ -96,9 +135,9 @@ def upload_images(
 
     def process_one(item):
         ocr_text = run_ocr(str(item["stored_path"]))
-        page_number = extract_page_number(ocr_text)
+        page_number = detect_page_number_from_regions(str(item["stored_path"]))
         if page_number is None:
-            page_number = detect_page_number_from_regions(str(item["stored_path"]))
+            page_number = extract_page_number(ocr_text)
         return ocr_text, page_number
 
     worker_count = max(1, min(OCR_WORKERS, len(pending)))
@@ -140,17 +179,19 @@ def upload_images_api(
 
 
 @app.get("/images", response_model=List[ImageOut])
-def list_images(db: Session = Depends(get_db)):
+def list_images(request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
     return db.query(ImageRecord).order_by(ImageRecord.created_at.desc()).all()
 
 
 @app.get("/api/images", response_model=List[ImageOut])
-def list_images_api(db: Session = Depends(get_db)):
-    return list_images(db=db)
+def list_images_api(request: Request, db: Session = Depends(get_db)):
+    return list_images(request=request, db=db)
 
 
 @app.get("/images/{image_id}/file")
-def get_image_file(image_id: int, db: Session = Depends(get_db)):
+def get_image_file(request: Request, image_id: int, db: Session = Depends(get_db)):
+    require_auth(request)
     record = db.query(ImageRecord).filter(ImageRecord.id == image_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -169,6 +210,78 @@ def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(book)
     return book
+
+
+@app.post("/llm/discuss", response_model=LlmDiscussResponse)
+def discuss_with_llm(payload: LlmDiscussRequest, db: Session = Depends(get_db)):
+    prompt = payload.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt가 필요합니다.")
+
+    query = db.query(ImageRecord)
+    if payload.image_ids:
+        query = query.filter(ImageRecord.id.in_(payload.image_ids))
+    records = query.all()
+    if payload.include_all_images is False and not payload.image_ids:
+        records = []
+
+    records.sort(
+        key=lambda item: (
+            item.page_number is None,
+            item.page_number or 0,
+            item.id,
+        )
+    )
+
+    context, used_images = build_ocr_context(records)
+    image_payloads = []
+    included_images = 0
+    if payload.include_images:
+        image_payloads, included_images = build_image_payloads(
+            records, max_images=payload.max_images
+        )
+        if included_images == 0:
+            raise HTTPException(status_code=400, detail="이미지 전송 대상이 없습니다.")
+
+    if not context and not image_payloads:
+        raise HTTPException(status_code=400, detail="OCR 텍스트가 없습니다.")
+
+    messages = payload.messages or []
+    system = {
+        "role": "system",
+        "content": (
+            "너는 연구 조교다. 제공된 스캔 OCR을 기반으로 사용자의 연구 질문에 답하고 "
+            "필요하면 페이지 번호를 근거로 요약, 비교, 토론 포인트를 제시한다."
+        ),
+    }
+    if image_payloads:
+        content = [
+            {
+                "type": "text",
+                "text": f"연구 토픽: {prompt}\n\n[스캔 OCR]\n{context}",
+            },
+            *image_payloads,
+        ]
+    else:
+        content = f"연구 토픽: {prompt}\n\n[스캔 OCR]\n{context}"
+    user = {"role": "user", "content": content}
+    assembled = [system, *messages, user]
+    try:
+        answer = call_llm(assembled)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return LlmDiscussResponse(
+        answer=answer,
+        used_images=used_images,
+        ocr_chars=len(context),
+        included_images=included_images,
+    )
+
+
+@app.post("/api/llm/discuss", response_model=LlmDiscussResponse)
+def discuss_with_llm_api(payload: LlmDiscussRequest, db: Session = Depends(get_db)):
+    return discuss_with_llm(payload=payload, db=db)
 
 
 def get_global_vocab(db: Session, n_values: Optional[List[int]] = None) -> set:

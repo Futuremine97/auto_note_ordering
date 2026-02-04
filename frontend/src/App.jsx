@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -85,6 +85,19 @@ export default function App() {
   const [bookForm, setBookForm] = useState({ title: "", author_name: "" });
   const [actionMessage, setActionMessage] = useState("");
   const [viewMode, setViewMode] = useState("book");
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatPrompt, setChatPrompt] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [includeAllImages, setIncludeAllImages] = useState(true);
+  const [includeVision, setIncludeVision] = useState(true);
+  const [maxVisionImages, setMaxVisionImages] = useState(12);
+  const chatEndRef = useRef(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authError, setAuthError] = useState("");
+  const uploadDisabled = loading || (!isAuthed && authChecked);
 
   const grouped = useMemo(() => {
     return viewMode === "cluster"
@@ -111,10 +124,36 @@ export default function App() {
   }
 
   useEffect(() => {
+    checkAuth();
+  }, []);
+
+  async function checkAuth() {
+    try {
+      const res = await fetch(`${API_BASE}/auth/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setIsAuthed(Boolean(data.authenticated));
+      } else {
+        setIsAuthed(true);
+      }
+    } catch {
+      setIsAuthed(true);
+    } finally {
+      setAuthChecked(true);
+    }
+  }
+
+  useEffect(() => {
+    if (!authChecked || !isAuthed) return;
     Promise.all([fetchRecords(), fetchBooks()]).catch((err) =>
       setError(err.message)
     );
-  }, []);
+  }, [authChecked, isAuthed]);
+
+  useEffect(() => {
+    if (!chatEndRef.current) return;
+    chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatLoading]);
 
   function resolveBookName(bookId) {
     const book = books.find((item) => item.id === bookId);
@@ -123,6 +162,10 @@ export default function App() {
   }
 
   async function handlePredictAll(applyLabels = false) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     setActionMessage("");
     setError("");
     const res = await fetch(`${API_BASE}/images/predict-all`, {
@@ -151,6 +194,10 @@ export default function App() {
   }
 
   async function handleCluster(applyLabels = false) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     setActionMessage("");
     setError("");
     const res = await fetch(`${API_BASE}/images/cluster`, {
@@ -184,6 +231,10 @@ export default function App() {
 
   async function handleCreateBook(event) {
     event.preventDefault();
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     if (!bookForm.title.trim() || !bookForm.author_name.trim()) {
       setError("책 제목과 저자명을 입력해주세요.");
       return;
@@ -204,6 +255,10 @@ export default function App() {
   }
 
   async function handleAssignBook(imageId, bookId) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     setActionMessage("");
     const res = await fetch(`${API_BASE}/images/${imageId}`, {
       method: "PATCH",
@@ -218,6 +273,10 @@ export default function App() {
   }
 
   async function handleTrain(bookId) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     setActionMessage("");
     const res = await fetch(`${API_BASE}/books/${bookId}/train`, {
       method: "POST",
@@ -231,6 +290,10 @@ export default function App() {
   }
 
   async function handlePredict(imageId) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      return;
+    }
     setActionMessage("");
     const res = await fetch(`${API_BASE}/images/${imageId}/predict`, {
       method: "POST",
@@ -245,6 +308,11 @@ export default function App() {
   }
 
   async function handleUpload(event) {
+    if (!isAuthed) {
+      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+      event.target.value = "";
+      return;
+    }
     const files = event.target.files;
     if (!files.length) return;
 
@@ -274,6 +342,74 @@ export default function App() {
     }
   }
 
+  async function handleDiscuss() {
+    if (!chatPrompt.trim()) return;
+    if (!isAuthed) {
+      setChatError("비밀번호 입력 후 이용할 수 있습니다.");
+      return;
+    }
+    setChatError("");
+    setChatLoading(true);
+
+    const history = [...chatMessages];
+    const prompt = chatPrompt.trim();
+    setChatPrompt("");
+    setChatMessages([...history, { role: "user", content: prompt }]);
+
+    try {
+      const res = await fetch(`${API_BASE}/llm/discuss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          include_all_images: includeAllImages,
+          include_images: includeVision,
+          max_images: includeVision ? Number(maxVisionImages) || 12 : null,
+          messages: history,
+        }),
+      });
+      if (!res.ok) {
+        const message = await res.text();
+        throw new Error(message || "LLM 요청에 실패했습니다.");
+      }
+      const data = await res.json();
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.answer },
+      ]);
+    } catch (err) {
+      setChatError(err.message || "LLM 요청에 실패했습니다.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    setAuthError("");
+    if (!passwordInput.trim()) {
+      setAuthError("비밀번호를 입력해주세요.");
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: passwordInput }),
+      });
+      if (!res.ok) {
+        const message = await res.text();
+        setAuthError(message || "비밀번호가 올바르지 않습니다.");
+        return;
+      }
+      setPasswordInput("");
+      setIsAuthed(true);
+      await Promise.all([fetchRecords(), fetchBooks()]);
+    } catch (err) {
+      setAuthError(err.message || "로그인 실패");
+    }
+  }
+
   return (
     <div className="page">
       <header>
@@ -284,16 +420,47 @@ export default function App() {
             이미지를 업로드하면 OCR로 페이지 번호를 인식하고 자동으로 그룹화합니다.
           </p>
         </div>
-        <label className={`upload ${loading ? "disabled" : ""}`}>
-          <input type="file" multiple accept="image/*" onChange={handleUpload} disabled={loading} />
-          {loading ? "처리 중..." : "이미지 업로드"}
+        <label className={`upload ${uploadDisabled ? "disabled" : ""}`}>
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={handleUpload}
+            disabled={uploadDisabled}
+          />
+          {loading
+            ? "처리 중..."
+            : !isAuthed && authChecked
+              ? "비밀번호 필요"
+              : "이미지 업로드"}
         </label>
       </header>
 
       {error && <div className="error">{error}</div>}
       {actionMessage && <div className="success">{actionMessage}</div>}
 
-      <section className="panel">
+      {!isAuthed && authChecked && (
+        <section className="panel auth-panel">
+          <div>
+            <h2>비밀번호 입력</h2>
+            <p className="muted">
+              사진과 OCR 데이터는 비밀번호 입력 후 확인할 수 있습니다.
+            </p>
+          </div>
+          <form className="auth-form" onSubmit={handleAuthSubmit}>
+            <input
+              type="password"
+              placeholder="비밀번호"
+              value={passwordInput}
+              onChange={(event) => setPasswordInput(event.target.value)}
+            />
+            <button type="submit">확인</button>
+          </form>
+          {authError && <div className="error">{authError}</div>}
+        </section>
+      )}
+
+      <section className={`panel ${!isAuthed ? "disabled-panel" : ""}`}>
         <div>
           <h2>책/저자 등록</h2>
           <p className="muted">OCR 텍스트를 책별로 분류하기 위해 먼저 책을 등록하세요.</p>
@@ -362,6 +529,85 @@ export default function App() {
               클러스터 기준
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className={`panel chat-panel ${!isAuthed ? "disabled-panel" : ""}`}>
+        <div className="chat-header">
+          <div>
+            <h2>LLM 연구 대화</h2>
+            <p className="muted">
+              업로드된 OCR 텍스트를 기반으로 연구 토픽을 논의합니다.
+            </p>
+          </div>
+          <div className="chat-toggles">
+            <label className="chat-toggle">
+              <input
+                type="checkbox"
+                checked={includeAllImages}
+                onChange={(event) => setIncludeAllImages(event.target.checked)}
+              />
+              모든 이미지 OCR 포함
+            </label>
+            <label className="chat-toggle">
+              <input
+                type="checkbox"
+                checked={includeVision}
+                onChange={(event) => setIncludeVision(event.target.checked)}
+              />
+              이미지까지 전송
+            </label>
+            <label className="chat-toggle small">
+              최대 이미지
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={maxVisionImages}
+                onChange={(event) => setMaxVisionImages(event.target.value)}
+                disabled={!includeVision}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="chat-window">
+          {chatMessages.length === 0 && (
+            <p className="muted">아직 대화가 없습니다. 토픽을 입력해보세요.</p>
+          )}
+          {chatMessages.map((message, idx) => (
+            <div key={`${message.role}-${idx}`} className={`chat-row ${message.role}`}>
+              <div className={`chat-bubble ${message.role}`}>
+                <div className="chat-meta">
+                  {message.role === "user" ? "사용자" : "LLM"}
+                </div>
+                <p>{message.content}</p>
+              </div>
+            </div>
+          ))}
+          {chatLoading && (
+            <div className="chat-row assistant">
+              <div className="chat-bubble assistant">
+                <div className="chat-meta">LLM</div>
+                <p>응답을 생성 중입니다...</p>
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {chatError && <div className="error">{chatError}</div>}
+
+        <div className="chat-input">
+          <textarea
+            rows={3}
+            placeholder="연구 토픽이나 질문을 입력하세요."
+            value={chatPrompt}
+            onChange={(event) => setChatPrompt(event.target.value)}
+          />
+          <button type="button" disabled={chatLoading} onClick={handleDiscuss}>
+            {chatLoading ? "요청 중..." : "LLM에게 요청"}
+          </button>
         </div>
       </section>
 

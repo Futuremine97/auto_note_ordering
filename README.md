@@ -2,20 +2,21 @@
 
 Page OCR Sorter
 
-책 스캔 이미지를 업로드하면 OCR로 페이지 번호를 인식해 자동으로 분류하는 웹앱입니다.
+A web app that uploads scanned book images, detects page numbers via OCR, and automatically organizes pages. It also supports book/author classification with n-gram models, clustering, and LLM discussion (OCR + optional images).
 
-## 구성
+## Structure
 - `backend/`: FastAPI + PostgreSQL + Tesseract
 - `frontend/`: React (Vite)
-- `docker-compose.yml`: PostgreSQL
+- `docker-compose.yml`: PostgreSQL (local)
+- `docker-compose.prod.yml`: Full stack (backend + db + nginx)
 
-## 실행 방법 (로컬 개발)
-1. PostgreSQL 실행
+## Local Development
+1) Start PostgreSQL
 ```bash
 docker compose up -d
 ```
 
-2. 백엔드 실행
+2) Run backend
 ```bash
 cd backend
 python -m venv .venv
@@ -24,48 +25,47 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-3. 프론트엔드 실행
+3) Run frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-기본 API 주소는 `http://localhost:8000`입니다.
+Default API base: `http://localhost:8000`
 
-## 공개 배포 (Nginx + HTTPS + 도메인)
-도메인: `your-domain.com`
+## Production (Nginx + HTTPS + Domain)
+Domain: `your-domain.com`
 
-### 1) DNS 설정
-도메인 관리 페이지에서 다음 A 레코드를 추가하세요.
-- `@` → 서버 공인 IP
-- `www` → 서버 공인 IP
+### 1) DNS
+Create A records in your domain DNS:
+- `@` → server public IP
+- `www` → server public IP
 
-### 2) 서버 준비 (Ubuntu VPS 가정)
+### 2) Server setup (Ubuntu VPS)
 ```bash
 sudo apt update
 sudo apt install -y docker.io docker-compose-plugin
 sudo systemctl enable --now docker
 ```
 
-### 3) 배포 실행
-서버에 이 프로젝트를 클론한 뒤:
+### 3) Deploy
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-### 4) HTTPS 설정 (Let’s Encrypt)
+### 4) HTTPS (Let’s Encrypt)
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d your-domain.com -d www.your-domain.com
 ```
 
-인증서 자동 갱신 확인:
+Renew test:
 ```bash
 sudo certbot renew --dry-run
 ```
 
-### 5) 방화벽 (선택)
+### 5) Firewall (optional)
 ```bash
 sudo ufw allow OpenSSH
 sudo ufw allow 80
@@ -73,40 +73,48 @@ sudo ufw allow 443
 sudo ufw enable
 ```
 
-## Tesseract 설치
+## Tesseract
 - macOS (Homebrew)
 ```bash
 brew install tesseract
 ```
 
-Tesseract 경로가 PATH에 없으면 `backend/.env`에 `TESSERACT_CMD`를 지정하세요.
-한국어 페이지 번호 인식이 필요하면 `TESSERACT_LANG=eng+kor`로 설정하고 언어 팩을 설치하세요.
+If Tesseract is not in PATH, set `TESSERACT_CMD` in `.env`.
+For Korean/Japanese page numbers set `TESSERACT_LANG=eng+kor+jpn` and install language packs.
 
-## OCR 정확도 팁
-페이지 번호는 상단/하단 밴드를 별도 OCR로 재검사하고, 상단을 약간 더 선호하도록
-설정했습니다. 스캔 품질이 낮다면 해상도를 높이고, 페이지 번호가 잘 보이도록
-크롭해서 업로드하면 정확도가 올라갑니다.
+## OCR Accuracy Tips
+We scan top/bottom bands and slightly prefer the top area. For better accuracy:
+- increase scan resolution
+- avoid cropping out the page number
+- keep numbers near the top/bottom margin
 
-## 환경 변수
-`backend/.env.example` 참고
+## Environment Variables
+See `./.env.example`
 
-### 프로덕션용 환경 변수 (.env)
-배포 서버에서 아래 예시를 참고해 `.env`를 만들고 **강력한 비밀번호로 변경**하세요.
+### Photo Access Password (optional)
+Set a password to require login before viewing photos/OCR data.
+```bash
+PHOTO_PASSWORD=your_password
+AUTH_SECRET=long_random_secret
+AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_TTL_HOURS=72
+```
+
+If you run without HTTPS (local dev), set `AUTH_COOKIE_SECURE=false`.
+
+### Production `.env`
+Create `.env` on the server and use strong passwords:
 ```bash
 cp .env.example .env
 ```
 
-## 책별 저자 분류 (n-gram)
-OCR 텍스트를 책별로 라벨링한 뒤 n-gram 모델로 분류합니다.
+## Book / Author Classification (n-gram)
+Label images by book, train n-gram models, then predict.
 
-### 누적 vocab
-책을 학습할 때마다 전체 n-gram vocab을 DB에 누적 저장하고, 예측 시에도
-이 vocab 크기를 사용해 스무딩을 안정화합니다.
+### Accumulated vocab
+The global n-gram vocab is accumulated in DB and used for stable smoothing.
 
-### Perplexity 기반 분류 + 하이퍼파라미터 튜닝
-라벨링된 기존 OCR 텍스트로 n-gram 후보들을 평가하고, **perplexity**가 낮고
-정확도가 높은 설정을 선택합니다.
-
+### Perplexity tuning
 ```bash
 curl -X POST http://localhost:8000/api/ngram/tune \
   -H "Content-Type: application/json" \
@@ -118,33 +126,53 @@ curl -X POST http://localhost:8000/api/ngram/tune \
   }'
 ```
 
-선택된 하이퍼파라미터는 DB에 저장되며, 모든 책 모델을 재학습합니다.
+### Flow
+1) Create book
+2) Assign book ID to images
+3) Train book model
+4) Predict per image / bulk
 
-### 흐름
-1. 책 등록
-2. 이미지에 책 ID 라벨 지정
-3. 책별 모델 학습
-4. 이미지별 예측 실행
-
-### API 예시
+### API Examples
 ```bash
-# 1) 책 등록
+# 1) create book
 curl -X POST http://localhost:8000/api/books \
   -H "Content-Type: application/json" \
-  -d '{"title":"책 제목","author_name":"저자 이름"}'
+  -d '{"title":"Book Title","author_name":"Author Name"}'
 
-# 2) 이미지에 책 지정
+# 2) assign book
 curl -X PATCH http://localhost:8000/api/images/1 \
   -H "Content-Type: application/json" \
   -d '{"book_id":1}'
 
-# 3) 모델 학습
+# 3) train
 curl -X POST http://localhost:8000/api/books/1/train
 
-# 4) 예측
+# 4) predict
 curl -X POST http://localhost:8000/api/images/1/predict
 ```
 
-### DB 주의
-기존 DB를 사용 중이라면 새 컬럼 추가가 필요합니다. 간단히 시작하려면
-로컬/개발 DB를 삭제 후 재생성하거나, 마이그레이션을 적용하세요.
+## Clustering
+Cluster similar OCR pages and optionally apply labels.
+
+```bash
+curl -X POST http://localhost:8000/api/images/cluster \
+  -H "Content-Type: application/json" \
+  -d '{"threshold":0.25,"apply_labels":false}'
+```
+
+Max clusters are fixed to 10.
+
+## LLM Discussion (OCR + optional images)
+The UI can send OCR text (and optionally images) to an LLM for research discussion.
+
+### OpenAI-compatible example
+```bash
+LLM_PROVIDER=openai_compatible
+LLM_API_BASE=https://api.openai.com
+LLM_API_KEY=YOUR_KEY
+LLM_MODEL=YOUR_MODEL
+```
+
+## DB Notes
+If you use an existing DB, you may need to add new columns (e.g., `book_id`, `predicted_*`, `cluster_id`).
+For a clean start, reset the DB or run migrations/ALTER TABLE commands.
