@@ -18,6 +18,7 @@ from .models import ImageRecord, Book, NgramVocab
 from .ocr import run_ocr, detect_page_number_from_regions, extract_page_number
 from .schemas import (
     ImageOut,
+    ImageSummary,
     BookCreate,
     BookOut,
     ImageAssign,
@@ -178,13 +179,12 @@ def upload_images_api(
     return upload_images(files=files, db=db)
 
 
-@app.get("/images", response_model=List[ImageOut])
+@app.get("/images", response_model=List[ImageSummary])
 def list_images(request: Request, db: Session = Depends(get_db)):
-    require_auth(request)
     return db.query(ImageRecord).order_by(ImageRecord.created_at.desc()).all()
 
 
-@app.get("/api/images", response_model=List[ImageOut])
+@app.get("/api/images", response_model=List[ImageSummary])
 def list_images_api(request: Request, db: Session = Depends(get_db)):
     return list_images(request=request, db=db)
 

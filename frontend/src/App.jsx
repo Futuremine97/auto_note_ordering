@@ -97,6 +97,10 @@ export default function App() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [authError, setAuthError] = useState("");
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authReason, setAuthReason] = useState("");
+  const pendingAuthAction = useRef(null);
+  const [revealedImages, setRevealedImages] = useState([]);
   const uploadDisabled = loading || (!isAuthed && authChecked);
 
   const grouped = useMemo(() => {
@@ -134,21 +138,21 @@ export default function App() {
         const data = await res.json();
         setIsAuthed(Boolean(data.authenticated));
       } else {
-        setIsAuthed(true);
+        setIsAuthed(false);
       }
     } catch {
-      setIsAuthed(true);
+      setIsAuthed(false);
     } finally {
       setAuthChecked(true);
     }
   }
 
   useEffect(() => {
-    if (!authChecked || !isAuthed) return;
+    if (!authChecked) return;
     Promise.all([fetchRecords(), fetchBooks()]).catch((err) =>
       setError(err.message)
     );
-  }, [authChecked, isAuthed]);
+  }, [authChecked]);
 
   useEffect(() => {
     if (!chatEndRef.current) return;
@@ -161,9 +165,28 @@ export default function App() {
     return `${book.title} · ${book.author_name}`;
   }
 
+  function requestAuth(reason, action) {
+    if (isAuthed) {
+      if (action) action();
+      return true;
+    }
+    pendingAuthAction.current = action || null;
+    setAuthReason(reason || "사진을 보려면 비밀번호를 입력해야 합니다.");
+    setAuthError("");
+    setShowAuthModal(true);
+    return false;
+  }
+
+  function revealImage(imageId) {
+    requestAuth("이미지를 보려면 비밀번호가 필요합니다.", () => {
+      setRevealedImages((prev) =>
+        prev.includes(imageId) ? prev : [...prev, imageId]
+      );
+    });
+  }
+
   async function handlePredictAll(applyLabels = false) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("전체 자동 분류를 진행하려면 비밀번호가 필요합니다.")) {
       return;
     }
     setActionMessage("");
@@ -194,8 +217,7 @@ export default function App() {
   }
 
   async function handleCluster(applyLabels = false) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("클러스터링을 진행하려면 비밀번호가 필요합니다.")) {
       return;
     }
     setActionMessage("");
@@ -231,8 +253,7 @@ export default function App() {
 
   async function handleCreateBook(event) {
     event.preventDefault();
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("책 등록을 하려면 비밀번호가 필요합니다.")) {
       return;
     }
     if (!bookForm.title.trim() || !bookForm.author_name.trim()) {
@@ -255,8 +276,7 @@ export default function App() {
   }
 
   async function handleAssignBook(imageId, bookId) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("라벨을 지정하려면 비밀번호가 필요합니다.")) {
       return;
     }
     setActionMessage("");
@@ -273,8 +293,7 @@ export default function App() {
   }
 
   async function handleTrain(bookId) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("모델 학습을 하려면 비밀번호가 필요합니다.")) {
       return;
     }
     setActionMessage("");
@@ -290,8 +309,7 @@ export default function App() {
   }
 
   async function handlePredict(imageId) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("예측을 하려면 비밀번호가 필요합니다.")) {
       return;
     }
     setActionMessage("");
@@ -308,8 +326,7 @@ export default function App() {
   }
 
   async function handleUpload(event) {
-    if (!isAuthed) {
-      setError("사진을 보려면 비밀번호를 입력해야 합니다.");
+    if (!requestAuth("이미지 업로드를 하려면 비밀번호가 필요합니다.")) {
       event.target.value = "";
       return;
     }
@@ -344,8 +361,7 @@ export default function App() {
 
   async function handleDiscuss() {
     if (!chatPrompt.trim()) return;
-    if (!isAuthed) {
-      setChatError("비밀번호 입력 후 이용할 수 있습니다.");
+    if (!requestAuth("LLM 대화는 비밀번호 입력 후 이용할 수 있습니다.")) {
       return;
     }
     setChatError("");
@@ -404,9 +420,31 @@ export default function App() {
       }
       setPasswordInput("");
       setIsAuthed(true);
+      setShowAuthModal(false);
+      setAuthReason("");
       await Promise.all([fetchRecords(), fetchBooks()]);
+      if (pendingAuthAction.current) {
+        const action = pendingAuthAction.current;
+        pendingAuthAction.current = null;
+        action();
+      }
     } catch (err) {
       setAuthError(err.message || "로그인 실패");
+    }
+  }
+
+  function closeAuthModal() {
+    setShowAuthModal(false);
+    setAuthError("");
+    setPasswordInput("");
+    pendingAuthAction.current = null;
+  }
+
+  function handleUploadClick(event) {
+    if (!isAuthed) {
+      event.preventDefault();
+      event.stopPropagation();
+      requestAuth("이미지 업로드를 하려면 비밀번호가 필요합니다.");
     }
   }
 
@@ -420,7 +458,10 @@ export default function App() {
             이미지를 업로드하면 OCR로 페이지 번호를 인식하고 자동으로 그룹화합니다.
           </p>
         </div>
-        <label className={`upload ${uploadDisabled ? "disabled" : ""}`}>
+        <label
+          className={`upload ${uploadDisabled ? "disabled" : ""}`}
+          onClick={handleUploadClick}
+        >
           <input
             type="file"
             multiple
@@ -430,35 +471,14 @@ export default function App() {
           />
           {loading
             ? "처리 중..."
-            : !isAuthed && authChecked
-              ? "비밀번호 필요"
+            : !isAuthed
+              ? "로그인 후 업로드"
               : "이미지 업로드"}
         </label>
       </header>
 
       {error && <div className="error">{error}</div>}
       {actionMessage && <div className="success">{actionMessage}</div>}
-
-      {!isAuthed && authChecked && (
-        <section className="panel auth-panel">
-          <div>
-            <h2>비밀번호 입력</h2>
-            <p className="muted">
-              사진과 OCR 데이터는 비밀번호 입력 후 확인할 수 있습니다.
-            </p>
-          </div>
-          <form className="auth-form" onSubmit={handleAuthSubmit}>
-            <input
-              type="password"
-              placeholder="비밀번호"
-              value={passwordInput}
-              onChange={(event) => setPasswordInput(event.target.value)}
-            />
-            <button type="submit">확인</button>
-          </form>
-          {authError && <div className="error">{authError}</div>}
-        </section>
-      )}
 
       <section className={`panel ${!isAuthed ? "disabled-panel" : ""}`}>
         <div>
@@ -623,51 +643,93 @@ export default function App() {
               <span className="count">{group.items.length}장</span>
             </div>
             <div className="thumbs">
-              {group.items.map((item) => (
-                <figure key={item.id}>
-                  <img
-                    src={`${API_BASE}/images/${item.id}/file`}
-                    alt={item.original_filename}
-                    loading="lazy"
-                  />
-                  <figcaption>{item.original_filename}</figcaption>
-                  <div className="meta">
-                    <span>
-                      페이지: {item.page_number ?? "미인식"}
-                    </span>
-                    <span>
-                      클러스터: {item.cluster_id ?? "미분류"}
-                    </span>
-                    <span>라벨: {resolveBookName(item.book_id)}</span>
-                    <span>
-                      예측:{" "}
-                      {item.predicted_book_id
-                        ? resolveBookName(item.predicted_book_id)
-                        : "미예측"}
-                    </span>
-                  </div>
-                  <div className="actions">
-                    <select
-                      value={item.book_id || ""}
-                      onChange={(event) => handleAssignBook(item.id, event.target.value)}
-                    >
-                      <option value="">책 선택</option>
-                      {books.map((book) => (
-                        <option key={book.id} value={book.id}>
-                          {book.title} · {book.author_name}
-                        </option>
-                      ))}
-                    </select>
-                    <button type="button" onClick={() => handlePredict(item.id)}>
-                      예측
-                    </button>
-                  </div>
-                </figure>
-              ))}
+              {group.items.map((item) => {
+                const isRevealed = isAuthed && revealedImages.includes(item.id);
+                return (
+                  <figure key={item.id} className={isRevealed ? "" : "locked"}>
+                    {isRevealed ? (
+                      <img
+                        src={`${API_BASE}/images/${item.id}/file`}
+                        alt={item.original_filename}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="thumb-placeholder">
+                        <span>비밀번호 필요</span>
+                        <button type="button" onClick={() => revealImage(item.id)}>
+                          이미지 보기
+                        </button>
+                      </div>
+                    )}
+                    <figcaption>{item.original_filename}</figcaption>
+                    <div className="meta">
+                      <span>
+                        페이지: {item.page_number ?? "미인식"}
+                      </span>
+                      <span>
+                        클러스터: {item.cluster_id ?? "미분류"}
+                      </span>
+                      <span>라벨: {resolveBookName(item.book_id)}</span>
+                      <span>
+                        예측:{" "}
+                        {item.predicted_book_id
+                          ? resolveBookName(item.predicted_book_id)
+                          : "미예측"}
+                      </span>
+                    </div>
+                    <div className="actions">
+                      <select
+                        value={item.book_id || ""}
+                        onChange={(event) =>
+                          handleAssignBook(item.id, event.target.value)
+                        }
+                      >
+                        <option value="">책 선택</option>
+                        {books.map((book) => (
+                          <option key={book.id} value={book.id}>
+                            {book.title} · {book.author_name}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" onClick={() => handlePredict(item.id)}>
+                        예측
+                      </button>
+                    </div>
+                  </figure>
+                );
+              })}
             </div>
           </div>
         ))}
       </section>
+
+      {showAuthModal && (
+        <div className="modal-backdrop" onClick={closeAuthModal}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <h2>비밀번호 입력</h2>
+              <p className="muted">
+                {authReason || "사진을 보려면 비밀번호를 입력해야 합니다."}
+              </p>
+            </div>
+            <form className="auth-form" onSubmit={handleAuthSubmit}>
+              <input
+                type="password"
+                placeholder="비밀번호"
+                value={passwordInput}
+                onChange={(event) => setPasswordInput(event.target.value)}
+              />
+              <button type="submit">확인</button>
+            </form>
+            {authError && <div className="error">{authError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={closeAuthModal}>
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

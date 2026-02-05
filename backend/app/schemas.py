@@ -20,6 +20,22 @@ class ImageOut(BaseModel):
         from_attributes = True
 
 
+class ImageSummary(BaseModel):
+    id: int
+    original_filename: str
+    stored_filename: str
+    page_number: Optional[int]
+    book_id: Optional[int]
+    predicted_book_id: Optional[int]
+    predicted_author: Optional[str]
+    predicted_score: Optional[str]
+    cluster_id: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class BookCreate(BaseModel):
     title: str
     author_name: str
