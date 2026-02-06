@@ -9,6 +9,7 @@ RUN apt-get update \
         tesseract-ocr-eng \
         tesseract-ocr-kor \
         tesseract-ocr-jpn \
+        ffmpeg \
         libheif1 \
     && rm -rf /var/lib/apt/lists/*
 

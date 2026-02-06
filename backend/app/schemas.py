@@ -106,6 +106,28 @@ class ClusterResponse(BaseModel):
     applied_labels: int
 
 
+class EmbeddingRequest(BaseModel):
+    n_values: Optional[List[int]] = None
+    dim: Optional[int] = 128
+    limit: Optional[int] = None
+
+
+class EmbeddingPoint(BaseModel):
+    id: int
+    x: float
+    y: float
+    z: float
+    cluster_id: Optional[int]
+    book_id: Optional[int]
+    predicted_book_id: Optional[int]
+    page_number: Optional[int]
+
+
+class EmbeddingResponse(BaseModel):
+    total: int
+    points: List[EmbeddingPoint]
+
+
 class LlmMessage(BaseModel):
     role: str
     content: str
@@ -133,3 +155,10 @@ class AuthLogin(BaseModel):
 
 class AuthStatus(BaseModel):
     authenticated: bool
+
+
+class SpeechRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    response_format: Optional[str] = None
+    speed: Optional[float] = None

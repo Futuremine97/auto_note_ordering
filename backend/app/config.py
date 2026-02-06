@@ -29,6 +29,28 @@ LLM_MAX_IMAGES = int(os.getenv("LLM_MAX_IMAGES", "12"))
 LLM_IMAGE_MAX_BYTES = int(os.getenv("LLM_IMAGE_MAX_BYTES", "800000"))
 LLM_IMAGE_MAX_DIM = int(os.getenv("LLM_IMAGE_MAX_DIM", "1024"))
 
+STT_API_BASE = os.getenv("STT_API_BASE", "")
+STT_API_KEY = os.getenv("STT_API_KEY", "")
+STT_MODEL = os.getenv("STT_MODEL", "")
+STT_LANGUAGE = os.getenv("STT_LANGUAGE", "en")
+STT_ENDPOINT = os.getenv("STT_ENDPOINT", "")
+STT_TIMEOUT = int(os.getenv("STT_TIMEOUT", "60"))
+STT_MAX_BYTES = int(os.getenv("STT_MAX_BYTES", str(25 * 1024 * 1024)))
+STT_AUTO_COMPRESS = os.getenv("STT_AUTO_COMPRESS", "true").lower() == "true"
+STT_COMPRESS_FORMAT = os.getenv("STT_COMPRESS_FORMAT", "mp3")
+STT_COMPRESS_BITRATE = os.getenv("STT_COMPRESS_BITRATE", "32k")
+STT_COMPRESS_SAMPLE_RATE = int(os.getenv("STT_COMPRESS_SAMPLE_RATE", "16000"))
+STT_COMPRESS_CHANNELS = int(os.getenv("STT_COMPRESS_CHANNELS", "1"))
+
+TTS_API_BASE = os.getenv("TTS_API_BASE", "")
+TTS_API_KEY = os.getenv("TTS_API_KEY", "")
+TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
+TTS_VOICE = os.getenv("TTS_VOICE", "alloy")
+TTS_RESPONSE_FORMAT = os.getenv("TTS_RESPONSE_FORMAT", "mp3")
+TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
+TTS_ENDPOINT = os.getenv("TTS_ENDPOINT", "")
+TTS_TIMEOUT = int(os.getenv("TTS_TIMEOUT", "60"))
+
 PHOTO_PASSWORD = os.getenv("PHOTO_PASSWORD", "")
 AUTH_SECRET = os.getenv("AUTH_SECRET", "change-me")
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"

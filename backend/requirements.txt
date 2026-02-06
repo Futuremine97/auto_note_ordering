@@ -7,3 +7,4 @@ pillow==10.2.0
 pillow-heif==0.17.0
 pytesseract==0.3.10
 python-dotenv==1.0.1
+numpy==1.26.4

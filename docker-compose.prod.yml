@@ -34,6 +34,21 @@ services:
       LLM_MAX_IMAGES: ${LLM_MAX_IMAGES:-12}
       LLM_IMAGE_MAX_BYTES: ${LLM_IMAGE_MAX_BYTES:-800000}
       LLM_IMAGE_MAX_DIM: ${LLM_IMAGE_MAX_DIM:-1024}
+      STT_API_BASE: ${STT_API_BASE:-}
+      STT_API_KEY: ${STT_API_KEY:-}
+      STT_MODEL: ${STT_MODEL:-}
+      STT_LANGUAGE: ${STT_LANGUAGE:-en}
+      STT_ENDPOINT: ${STT_ENDPOINT:-}
+      STT_TIMEOUT: ${STT_TIMEOUT:-60}
+      STT_MAX_BYTES: ${STT_MAX_BYTES:-26214400}
+      TTS_API_BASE: ${TTS_API_BASE:-}
+      TTS_API_KEY: ${TTS_API_KEY:-}
+      TTS_MODEL: ${TTS_MODEL:-tts-1}
+      TTS_VOICE: ${TTS_VOICE:-alloy}
+      TTS_RESPONSE_FORMAT: ${TTS_RESPONSE_FORMAT:-mp3}
+      TTS_SPEED: ${TTS_SPEED:-1.0}
+      TTS_ENDPOINT: ${TTS_ENDPOINT:-}
+      TTS_TIMEOUT: ${TTS_TIMEOUT:-60}
     volumes:
       - uploads:/data/uploads
     depends_on:

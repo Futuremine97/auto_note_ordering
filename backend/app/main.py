@@ -29,10 +29,14 @@ from .schemas import (
     BulkPredictResponse,
     ClusterRequest,
     ClusterResponse,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingPoint,
     LlmDiscussRequest,
     LlmDiscussResponse,
     AuthLogin,
     AuthStatus,
+    SpeechRequest,
 )
 from .ngram import (
     build_model,
@@ -42,9 +46,12 @@ from .ngram import (
     build_symbol_vocab,
     extract_ngrams,
 )
+from .embedding import build_embeddings_3d
 from .llm import build_ocr_context, build_image_payloads, call_llm
 from .auth import AUTH_COOKIE_NAME, create_auth_cookie, require_auth, verify_auth_cookie
 from .config import AUTH_COOKIE_SECURE, AUTH_COOKIE_TTL_HOURS, PHOTO_PASSWORD
+from .stt import transcribe_audio
+from .tts import synthesize_speech
 
 Base.metadata.create_all(bind=engine)
 
@@ -282,6 +289,42 @@ def discuss_with_llm(payload: LlmDiscussRequest, db: Session = Depends(get_db)):
 @app.post("/api/llm/discuss", response_model=LlmDiscussResponse)
 def discuss_with_llm_api(payload: LlmDiscussRequest, db: Session = Depends(get_db)):
     return discuss_with_llm(payload=payload, db=db)
+
+
+@app.post("/api/audio/transcribe")
+def transcribe_audio_api(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    require_auth(request)
+    if not file:
+        raise HTTPException(status_code=400, detail="No audio file uploaded")
+    payload = file.file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+    try:
+        text = transcribe_audio(payload, file.filename or "audio")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"text": text}
+
+
+@app.post("/api/audio/speech")
+def create_speech_api(payload: SpeechRequest, request: Request):
+    require_auth(request)
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="텍스트를 입력해주세요.")
+    try:
+        audio_bytes, media_type = synthesize_speech(
+            text=payload.text,
+            voice=payload.voice,
+            response_format=payload.response_format,
+            speed=payload.speed,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(content=audio_bytes, media_type=media_type)
 
 
 def get_global_vocab(db: Session, n_values: Optional[List[int]] = None) -> set:
@@ -587,6 +630,41 @@ def cluster_images_root(payload: ClusterRequest, db: Session = Depends(get_db)):
     return cluster_images(payload=payload, db=db)
 
 
+@app.post("/api/images/cluster-embedding", response_model=EmbeddingResponse)
+def cluster_embedding(payload: EmbeddingRequest, request: Request, db: Session = Depends(get_db)):
+    require_auth(request)
+    n_values = payload.n_values or [3, 4, 5]
+    dim = payload.dim or 128
+
+    query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
+    if payload.limit:
+        query = query.limit(payload.limit)
+    images = query.order_by(ImageRecord.id.asc()).all()
+
+    if not images:
+        raise HTTPException(status_code=400, detail="No OCR images to embed")
+
+    texts = [record.ocr_text or "" for record in images]
+    coords = build_embeddings_3d(texts, n_values=n_values, dim=dim)
+
+    points = []
+    for record, (x, y, z) in zip(images, coords):
+        points.append(
+            EmbeddingPoint(
+                id=record.id,
+                x=float(x),
+                y=float(y),
+                z=float(z),
+                cluster_id=record.cluster_id,
+                book_id=record.book_id,
+                predicted_book_id=record.predicted_book_id,
+                page_number=record.page_number,
+            )
+        )
+
+    return EmbeddingResponse(total=len(points), points=points)
+
+
 def retrain_all_books(db: Session, n_values: List[int]) -> None:
     books = db.query(Book).all()
     global_vocab = set()
@@ -707,5 +785,5 @@ def predict_image_api(image_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/images/{image_id}/file")
-def get_image_file_api(image_id: int, db: Session = Depends(get_db)):
-    return get_image_file(image_id=image_id, db=db)
+def get_image_file_api(request: Request, image_id: int, db: Session = Depends(get_db)):
+    return get_image_file(request=request, image_id=image_id, db=db)

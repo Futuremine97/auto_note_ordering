@@ -84,6 +84,234 @@ function clusterColor(key) {
   return `hsl(${hue} 70% 55%)`;
 }
 
+function useResizeObserver(ref, onResize) {
+  useEffect(() => {
+    if (!ref.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        onResize(entry.contentRect);
+      }
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [ref, onResize]);
+}
+
+function Cluster3D({ points, height = 320 }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const projectedRef = useRef([]);
+  const [size, setSize] = useState({ width: 0, height });
+  const [rotation, setRotation] = useState({ x: 0.6, y: 0.8 });
+  const [zoom, setZoom] = useState(1);
+  const [hovered, setHovered] = useState(null);
+
+  useResizeObserver(containerRef, (rect) => {
+    setSize({ width: rect.width, height });
+  });
+
+  const normalized = useMemo(() => {
+    if (!points.length) return [];
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const zs = points.map((p) => p.z);
+    const center = {
+      x: xs.reduce((a, b) => a + b, 0) / xs.length,
+      y: ys.reduce((a, b) => a + b, 0) / ys.length,
+      z: zs.reduce((a, b) => a + b, 0) / zs.length,
+    };
+    const maxRange = Math.max(
+      1,
+      ...xs.map((value) => Math.abs(value - center.x)),
+      ...ys.map((value) => Math.abs(value - center.y)),
+      ...zs.map((value) => Math.abs(value - center.z))
+    );
+    return points.map((point) => ({
+      ...point,
+      nx: (point.x - center.x) / maxRange,
+      ny: (point.y - center.y) / maxRange,
+      nz: (point.z - center.z) / maxRange,
+    }));
+  }, [points]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || size.width === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const centerX = size.width / 2;
+    const centerY = size.height / 2;
+    const scale = Math.min(size.width, size.height) * 0.42 * zoom;
+    const cosX = Math.cos(rotation.x);
+    const sinX = Math.sin(rotation.x);
+    const cosY = Math.cos(rotation.y);
+    const sinY = Math.sin(rotation.y);
+    const fov = 2.6;
+
+    ctx.clearRect(0, 0, size.width, size.height);
+
+    const projectPoint = (nx, ny, nz) => {
+      const xz = nx * cosY + nz * sinY;
+      const zz = -nx * sinY + nz * cosY;
+      const yz = ny * cosX - zz * sinX;
+      const zz2 = ny * sinX + zz * cosX;
+      const depth = fov + zz2;
+      const perspective = scale / depth;
+      return {
+        sx: centerX + xz * perspective,
+        sy: centerY - yz * perspective,
+        depth,
+        r: Math.max(2, 4 * perspective),
+      };
+    };
+
+    const projected = normalized.map((point) => {
+      let x = point.nx;
+      let y = point.ny;
+      let z = point.nz;
+      const projectedPoint = projectPoint(x, y, z);
+      return { ...point, ...projectedPoint };
+    });
+
+    projected.sort((a, b) => a.depth - b.depth);
+    projectedRef.current = projected;
+
+    const origin = projectPoint(0, 0, 0);
+    const axisX = projectPoint(1, 0, 0);
+    const axisY = projectPoint(0, 1, 0);
+    const axisZ = projectPoint(0, 0, 1);
+
+    const drawAxis = (target, color, label) => {
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.moveTo(origin.sx, origin.sy);
+      ctx.lineTo(target.sx, target.sy);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.font = "12px 'Pretendard', sans-serif";
+      ctx.fillText(label, target.sx + 4, target.sy - 4);
+    };
+
+    drawAxis(axisX, "rgba(232, 93, 93, 0.9)", "X");
+    drawAxis(axisY, "rgba(88, 181, 110, 0.9)", "Y");
+    drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "Z");
+
+    for (const point of projected) {
+      ctx.beginPath();
+      ctx.fillStyle = clusterColor(point.cluster_id ?? "미분류");
+      ctx.globalAlpha = 0.85;
+      ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }, [normalized, rotation, zoom, size]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const handleDown = (event) => {
+      dragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+    };
+    const handleMove = (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      setRotation((prev) => ({
+        x: prev.x + dy * 0.005,
+        y: prev.y + dx * 0.005,
+      }));
+    };
+    const handleUp = () => {
+      dragging = false;
+    };
+    const handleWheel = (event) => {
+      event.preventDefault();
+      setZoom((prev) => Math.min(3, Math.max(0.5, prev - event.deltaY * 0.001)));
+    };
+
+    const handleHover = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      let closest = null;
+      let minDist = Infinity;
+      for (const point of projectedRef.current) {
+        const dx = point.sx - x;
+        const dy = point.sy - y;
+        const dist = dx * dx + dy * dy;
+        const radius = (point.r || 3) + 6;
+        if (dist <= radius * radius && dist < minDist) {
+          minDist = dist;
+          closest = point;
+        }
+      }
+      if (closest) {
+        setHovered({ ...closest, px: x, py: y });
+      } else {
+        setHovered(null);
+      }
+    };
+
+    const handleLeave = () => {
+      setHovered(null);
+    };
+
+    canvas.addEventListener("mousedown", handleDown);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    canvas.addEventListener("mousemove", handleHover);
+    canvas.addEventListener("mouseleave", handleLeave);
+
+    return () => {
+      canvas.removeEventListener("mousedown", handleDown);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("mousemove", handleHover);
+      canvas.removeEventListener("mouseleave", handleLeave);
+    };
+  }, []);
+
+  return (
+    <div className="cluster-canvas-wrap" ref={containerRef} style={{ height }}>
+      <canvas
+        ref={canvasRef}
+        width={size.width}
+        height={size.height}
+        className="cluster-canvas"
+      />
+      {hovered && (
+        <div
+          className="cluster-tooltip"
+          style={{ left: hovered.px, top: hovered.py }}
+        >
+          <img
+            src={`${API_BASE}/images/${hovered.id}/file`}
+            alt={`image-${hovered.id}`}
+            loading="lazy"
+          />
+          <div className="cluster-tooltip-meta">
+            <strong>이미지 #{hovered.id}</strong>
+            <span>페이지: {hovered.page_number ?? "미인식"}</span>
+            <span>클러스터: {hovered.cluster_id ?? "미분류"}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [records, setRecords] = useState([]);
   const [books, setBooks] = useState([]);
@@ -96,6 +324,13 @@ export default function App() {
   const [chatPrompt, setChatPrompt] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [embeddingPoints, setEmbeddingPoints] = useState([]);
+  const [embeddingLoading, setEmbeddingLoading] = useState(false);
+  const [embeddingError, setEmbeddingError] = useState("");
+  const [audioText, setAudioText] = useState("");
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState("");
+  const [audioFileName, setAudioFileName] = useState("");
   const [includeAllImages, setIncludeAllImages] = useState(true);
   const [includeVision, setIncludeVision] = useState(true);
   const [maxVisionImages, setMaxVisionImages] = useState(12);
@@ -154,6 +389,37 @@ export default function App() {
     setBooks(data);
   }
 
+  async function fetchEmbedding() {
+    if (!isAuthed) {
+      setEmbeddingPoints([]);
+      return;
+    }
+    if (records.length === 0) {
+      setEmbeddingPoints([]);
+      setEmbeddingError("");
+      return;
+    }
+    setEmbeddingError("");
+    setEmbeddingLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/images/cluster-embedding`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "3D 시각화 데이터를 불러오지 못했습니다.");
+      }
+      const data = await res.json();
+      setEmbeddingPoints(data.points || []);
+    } catch (err) {
+      setEmbeddingError(err.message);
+    } finally {
+      setEmbeddingLoading(false);
+    }
+  }
+
   useEffect(() => {
     checkAuth();
   }, []);
@@ -180,6 +446,11 @@ export default function App() {
       setError(err.message)
     );
   }, [authChecked]);
+
+  useEffect(() => {
+    if (!authChecked || !isAuthed) return;
+    fetchEmbedding();
+  }, [authChecked, isAuthed, records.length]);
 
   useEffect(() => {
     if (!chatEndRef.current) return;
@@ -275,6 +546,7 @@ export default function App() {
       );
     }
     await fetchRecords();
+    await fetchEmbedding();
     setViewMode("cluster");
   }
 
@@ -475,6 +747,55 @@ export default function App() {
     }
   }
 
+  async function handleAudioUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    if (!requestAuth("음성 메모 업로드를 하려면 비밀번호가 필요합니다.")) {
+      event.target.value = "";
+      return;
+    }
+    const file = files[0];
+    setAudioFileName(file.name);
+    setAudioText("");
+    setAudioError("");
+    setAudioLoading(true);
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch(`${API_BASE}/audio/transcribe`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const message = await res.text();
+        throw new Error(message || "Transcription failed");
+      }
+      const data = await res.json();
+      setAudioText(data.text || "");
+    } catch (err) {
+      setAudioError(err.message || "Transcription failed");
+    } finally {
+      setAudioLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  function handleAudioDownload() {
+    if (!audioText) return;
+    const blob = new Blob([audioText], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const baseName = audioFileName
+      ? audioFileName.replace(/\.[^.]+$/, "")
+      : "transcript";
+    link.href = url;
+    link.download = `${baseName}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="page">
       <header>
@@ -579,14 +900,18 @@ export default function App() {
         </div>
       </section>
 
-      {viewMode === "cluster" && clusterStats.list.length > 0 && (
-        <section className="panel cluster-panel">
-          <div>
-            <h2>클러스터 분포</h2>
-            <p className="muted">
-              현재 업로드된 이미지가 어떤 클러스터에 얼마나 분포되어 있는지 시각화합니다.
-            </p>
-          </div>
+      <section className="panel cluster-panel">
+        <div>
+          <h2>클러스터 분포</h2>
+          <p className="muted">
+            현재 업로드된 이미지가 어떤 클러스터에 얼마나 분포되어 있는지 시각화합니다.
+          </p>
+        </div>
+        {clusterStats.list.length === 0 ? (
+          <p className="muted">
+            아직 클러스터링 결과가 없습니다. "이미지 클러스터링"을 실행하면 분포가 표시됩니다.
+          </p>
+        ) : (
           <div className="cluster-bars">
             {clusterStats.list.map((item) => (
               <div key={item.key} className="cluster-bar-row">
@@ -604,8 +929,90 @@ export default function App() {
               </div>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
+
+      <section className={`panel cluster-embedding-panel ${!isAuthed ? "disabled-panel" : ""}`}>
+        <div className="cluster-embedding-header">
+          <div>
+            <h2>클러스터 3D 시각화</h2>
+            <p className="muted">
+              OCR 특징 벡터를 3차원으로 축소해 클러스터 분포를 확인합니다.
+            </p>
+            <p className="muted">
+              점 위에 마우스를 올리면 해당 사진이 미리보기로 표시됩니다.
+            </p>
+          </div>
+          <div className="cluster-embedding-actions">
+            <button type="button" onClick={fetchEmbedding} disabled={!isAuthed || embeddingLoading}>
+              {embeddingLoading ? "불러오는 중..." : "3D 새로고침"}
+            </button>
+          </div>
+        </div>
+        {!isAuthed ? (
+          <p className="muted">비밀번호를 입력하면 3D 시각화를 확인할 수 있습니다.</p>
+        ) : embeddingError ? (
+          <div className="error">{embeddingError}</div>
+        ) : embeddingPoints.length === 0 ? (
+          <p className="muted">
+            아직 시각화 데이터가 없습니다. 이미지 업로드 또는 클러스터링 이후 확인하세요.
+          </p>
+        ) : (
+          <>
+            <Cluster3D points={embeddingPoints} />
+            <div className="cluster-legend">
+              {clusterStats.list.map((item) => (
+                <div key={item.key} className="cluster-legend-item">
+                  <span
+                    className="cluster-legend-dot"
+                    style={{ background: clusterColor(item.key) }}
+                  />
+                  {item.label} · {item.count}장
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className={`panel audio-panel ${!isAuthed ? "disabled-panel" : ""}`}>
+        <div className="audio-header">
+          <div>
+            <h2>Voice Memo → Text (English)</h2>
+            <p className="muted">
+              Upload an audio memo and get an English transcription.
+            </p>
+          </div>
+          <label className={`upload audio-upload ${!isAuthed ? "disabled" : ""}`}>
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={handleAudioUpload}
+              disabled={!isAuthed || audioLoading}
+            />
+            {audioLoading ? "Transcribing..." : "오디오 업로드"}
+          </label>
+        </div>
+        {audioText && (
+          <div className="audio-actions">
+            <button type="button" onClick={handleAudioDownload}>
+              텍스트 다운로드
+            </button>
+          </div>
+        )}
+        {audioFileName && (
+          <p className="muted">File: {audioFileName}</p>
+        )}
+        {audioError && <div className="error">{audioError}</div>}
+        {audioText && (
+          <pre className="audio-output">{audioText}</pre>
+        )}
+        {!audioText && !audioError && !audioLoading && (
+          <p className="muted">
+            Supports common formats (m4a, mp3, wav). Language is fixed to English.
+          </p>
+        )}
+      </section>
 
       <section className={`panel chat-panel ${!isAuthed ? "disabled-panel" : ""}`}>
         <div className="chat-header">
