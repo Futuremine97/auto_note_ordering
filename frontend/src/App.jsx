@@ -77,6 +77,13 @@ function groupByCluster(records) {
     });
 }
 
+function clusterColor(key) {
+  if (key === "미분류") return "rgba(128, 128, 128, 0.6)";
+  const id = Number(key);
+  const hue = (id * 57) % 360;
+  return `hsl(${hue} 70% 55%)`;
+}
+
 export default function App() {
   const [records, setRecords] = useState([]);
   const [books, setBooks] = useState([]);
@@ -108,6 +115,26 @@ export default function App() {
       ? groupByCluster(records)
       : groupByBook(records, books);
   }, [records, books, viewMode]);
+
+  const clusterStats = useMemo(() => {
+    const counts = new Map();
+    for (const record of records) {
+      const key = record.cluster_id ?? "미분류";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const list = [...counts.entries()].map(([key, count]) => ({
+      key,
+      count,
+      label: key === "미분류" ? "미분류" : `클러스터 ${key}`,
+    }));
+    list.sort((a, b) => {
+      if (a.key === "미분류") return 1;
+      if (b.key === "미분류") return -1;
+      return Number(a.key) - Number(b.key);
+    });
+    const max = Math.max(1, ...list.map((item) => item.count));
+    return { list, max };
+  }, [records]);
 
   async function fetchRecords() {
     const res = await fetch(`${API_BASE}/images`);
@@ -551,6 +578,34 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {viewMode === "cluster" && clusterStats.list.length > 0 && (
+        <section className="panel cluster-panel">
+          <div>
+            <h2>클러스터 분포</h2>
+            <p className="muted">
+              현재 업로드된 이미지가 어떤 클러스터에 얼마나 분포되어 있는지 시각화합니다.
+            </p>
+          </div>
+          <div className="cluster-bars">
+            {clusterStats.list.map((item) => (
+              <div key={item.key} className="cluster-bar-row">
+                <div className="cluster-bar-label">{item.label}</div>
+                <div className="cluster-bar-track">
+                  <div
+                    className="cluster-bar-fill"
+                    style={{
+                      width: `${(item.count / clusterStats.max) * 100}%`,
+                      background: clusterColor(item.key),
+                    }}
+                  />
+                </div>
+                <div className="cluster-bar-count">{item.count}장</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className={`panel chat-panel ${!isAuthed ? "disabled-panel" : ""}`}>
         <div className="chat-header">
