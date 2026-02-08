@@ -97,8 +97,6 @@ function useResizeObserver(ref, onResize) {
   }, [ref, onResize]);
 }
 
-const OUTLIER_THRESHOLD = 0.85;
-
 function Cluster3D({ points, height = 320 }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -128,19 +126,12 @@ function Cluster3D({ points, height = 320 }) {
       ...ys.map((value) => Math.abs(value - center.y)),
       ...zs.map((value) => Math.abs(value - center.z))
     );
-    return points.map((point) => {
-      const nx = (point.x - center.x) / maxRange;
-      const ny = (point.y - center.y) / maxRange;
-      const nz = (point.z - center.z) / maxRange;
-      const dist = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      return {
-        ...point,
-        nx,
-        ny,
-        nz,
-        outlier: dist >= OUTLIER_THRESHOLD,
-      };
-    });
+    return points.map((point) => ({
+      ...point,
+      nx: (point.x - center.x) / maxRange,
+      ny: (point.y - center.y) / maxRange,
+      nz: (point.z - center.z) / maxRange,
+    }));
   }, [points]);
 
   useEffect(() => {
@@ -232,29 +223,11 @@ function Cluster3D({ points, height = 320 }) {
     drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "PC3");
 
     for (const point of projected) {
+      ctx.beginPath();
+      ctx.fillStyle = "rgba(54, 101, 255, 0.75)";
       ctx.globalAlpha = 0.9;
-      if (point.outlier) {
-        const spikes = 5;
-        const outer = point.r * 1.6;
-        const inner = point.r * 0.75;
-        ctx.beginPath();
-        for (let i = 0; i < spikes * 2; i += 1) {
-          const angle = (Math.PI / spikes) * i;
-          const radius = i % 2 === 0 ? outer : inner;
-          const x = point.sx + Math.cos(angle) * radius;
-          const y = point.sy + Math.sin(angle) * radius;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = "rgba(235, 72, 72, 0.9)";
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(54, 101, 255, 0.7)";
-        ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }, [normalized, rotation, zoom, size]);
@@ -355,8 +328,6 @@ function Cluster3D({ points, height = 320 }) {
           <div className="cluster-tooltip-meta">
             <strong>이미지 #{hovered.id}</strong>
             <span>페이지: {hovered.page_number ?? "미인식"}</span>
-            <span>클러스터: {hovered.cluster_id ?? "미분류"}</span>
-            <span>{hovered.outlier ? "Outlier" : "Normal"}</span>
           </div>
         </div>
       )}
@@ -987,9 +958,9 @@ export default function App() {
       <section className={`panel cluster-embedding-panel ${!isAuthed ? "disabled-panel" : ""}`}>
         <div className="cluster-embedding-header">
           <div>
-            <h2>클러스터 3D 시각화</h2>
+            <h2>사진 3D 시각화</h2>
             <p className="muted">
-              OCR 특징 벡터를 3차원으로 축소해 클러스터 분포를 확인합니다.
+              OCR 특징 벡터를 3차원으로 축소해 사진 데이터 분포를 확인합니다.
             </p>
             <p className="muted">
               점 위에 마우스를 올리면 해당 사진이 미리보기로 표시됩니다.
@@ -1015,11 +986,7 @@ export default function App() {
             <div className="embedding-legend">
               <div className="embedding-legend-item">
                 <span className="embedding-legend-dot" />
-                normal
-              </div>
-              <div className="embedding-legend-item">
-                <span className="embedding-legend-star">★</span>
-                outlier
+                각 점 = 사진 1장
               </div>
             </div>
           </>
