@@ -74,9 +74,19 @@ def _build_multipart(fields: dict, file_field: str, filename: str, content_type:
     return boundary, bytes(body)
 
 
-def _compress_audio(payload: bytes, filename: str) -> Tuple[bytes, str]:
+def _compress_audio(
+    payload: bytes,
+    filename: str,
+    bitrate: Optional[str] = None,
+    sample_rate: Optional[int] = None,
+    channels: Optional[int] = None,
+) -> Tuple[bytes, str]:
     suffix = Path(filename).suffix or ".bin"
     out_suffix = f".{STT_COMPRESS_FORMAT}"
+
+    bitrate = bitrate or STT_COMPRESS_BITRATE
+    sample_rate = sample_rate or STT_COMPRESS_SAMPLE_RATE
+    channels = channels or STT_COMPRESS_CHANNELS
 
     in_fd, in_path = tempfile.mkstemp(suffix=suffix)
     out_fd, out_path = tempfile.mkstemp(suffix=out_suffix)
@@ -95,11 +105,11 @@ def _compress_audio(payload: bytes, filename: str) -> Tuple[bytes, str]:
             "-i",
             in_path,
             "-ac",
-            str(STT_COMPRESS_CHANNELS),
+            str(channels),
             "-ar",
-            str(STT_COMPRESS_SAMPLE_RATE),
+            str(sample_rate),
             "-b:a",
-            STT_COMPRESS_BITRATE,
+            bitrate,
             out_path,
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -119,6 +129,48 @@ def _compress_audio(payload: bytes, filename: str) -> Tuple[bytes, str]:
                 pass
 
     return compressed, f"audio/{STT_COMPRESS_FORMAT}"
+
+
+def _compress_to_limit(payload: bytes, filename: str) -> Tuple[bytes, str, bool]:
+    if not STT_MAX_BYTES:
+        return payload, mimetypes.guess_type(filename)[0] or "application/octet-stream", True
+
+    bitrates = [
+        STT_COMPRESS_BITRATE,
+        "24k",
+        "16k",
+        "12k",
+        "8k",
+    ]
+    sample_rates = [
+        STT_COMPRESS_SAMPLE_RATE,
+        12000,
+        8000,
+    ]
+
+    best_payload = payload
+    best_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    tried = set()
+    for bitrate in bitrates:
+        for sample_rate in sample_rates:
+            key = (bitrate, sample_rate)
+            if key in tried:
+                continue
+            tried.add(key)
+            compressed, content_type = _compress_audio(
+                payload,
+                filename,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+            )
+            if len(compressed) < len(best_payload):
+                best_payload = compressed
+                best_type = content_type
+            if len(compressed) <= STT_MAX_BYTES:
+                return compressed, content_type, True
+
+    return best_payload, best_type, len(best_payload) <= STT_MAX_BYTES
 
 
 def _request_transcription(
@@ -153,8 +205,13 @@ def transcribe_audio(payload: bytes, filename: str, content_type: Optional[str] 
     compressed = False
 
     if STT_MAX_BYTES and len(payload) > STT_MAX_BYTES and STT_AUTO_COMPRESS:
-        payload, content_type = _compress_audio(payload, filename)
+        payload, content_type, fits = _compress_to_limit(payload, filename)
         compressed = True
+        if not fits:
+            max_mb = STT_MAX_BYTES / (1024 * 1024)
+            raise RuntimeError(
+                f"오디오 파일이 너무 큽니다. {max_mb:.0f}MB 이하로 줄여주세요."
+            )
 
     if STT_MAX_BYTES and len(payload) > STT_MAX_BYTES:
         max_mb = STT_MAX_BYTES / (1024 * 1024)
@@ -169,8 +226,13 @@ def transcribe_audio(payload: bytes, filename: str, content_type: Optional[str] 
         except HTTPError as exc:
             # API가 용량 초과를 반환하면 자동 압축 후 1회 재시도
             if exc.code == 413 and STT_AUTO_COMPRESS and not compressed:
-                payload, guessed_type = _compress_audio(payload, filename)
+                payload, guessed_type, fits = _compress_to_limit(payload, filename)
                 compressed = True
+                if not fits:
+                    max_mb = STT_MAX_BYTES / (1024 * 1024)
+                    raise RuntimeError(
+                        f"오디오 파일이 너무 큽니다. {max_mb:.0f}MB 이하로 줄여주세요."
+                    ) from exc
                 continue
             try:
                 error_body = exc.read().decode()
