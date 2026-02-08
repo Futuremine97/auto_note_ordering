@@ -20,6 +20,8 @@ from .config import (
     STT_TIMEOUT,
     STT_MAX_BYTES,
     STT_AUTO_COMPRESS,
+    STT_AUTO_SPLIT,
+    STT_CHUNK_SECONDS,
     STT_COMPRESS_FORMAT,
     STT_COMPRESS_BITRATE,
     STT_COMPRESS_SAMPLE_RATE,
@@ -131,6 +133,25 @@ def _compress_audio(
     return compressed, f"audio/{STT_COMPRESS_FORMAT}"
 
 
+def _parse_bitrate(bitrate: str) -> int:
+    value = bitrate.strip().lower()
+    if value.endswith("k"):
+        return int(float(value[:-1]) * 1000)
+    if value.endswith("m"):
+        return int(float(value[:-1]) * 1_000_000)
+    return int(value)
+
+
+def _estimate_segment_seconds(bitrate: str) -> int:
+    if not STT_MAX_BYTES:
+        return max(15, STT_CHUNK_SECONDS)
+    bps = _parse_bitrate(bitrate)
+    if bps <= 0:
+        return max(15, STT_CHUNK_SECONDS)
+    max_seconds = int((STT_MAX_BYTES * 0.9 * 8) / bps)
+    return max(15, min(STT_CHUNK_SECONDS, max_seconds))
+
+
 def _compress_to_limit(payload: bytes, filename: str) -> Tuple[bytes, str, bool]:
     if not STT_MAX_BYTES:
         return payload, mimetypes.guess_type(filename)[0] or "application/octet-stream", True
@@ -171,6 +192,75 @@ def _compress_to_limit(payload: bytes, filename: str) -> Tuple[bytes, str, bool]
                 return compressed, content_type, True
 
     return best_payload, best_type, len(best_payload) <= STT_MAX_BYTES
+
+
+def _split_audio_to_chunks(
+    payload: bytes,
+    filename: str,
+    bitrate: Optional[str] = None,
+    sample_rate: Optional[int] = None,
+    channels: Optional[int] = None,
+) -> List[Tuple[bytes, str, str]]:
+    bitrate = bitrate or STT_COMPRESS_BITRATE
+    sample_rate = sample_rate or STT_COMPRESS_SAMPLE_RATE
+    channels = channels or STT_COMPRESS_CHANNELS
+    segment_seconds = _estimate_segment_seconds(bitrate)
+
+    suffix = Path(filename).suffix or ".bin"
+    out_suffix = f".{STT_COMPRESS_FORMAT}"
+    temp_dir = tempfile.TemporaryDirectory()
+    in_fd, in_path = tempfile.mkstemp(suffix=suffix)
+    os.close(in_fd)
+
+    try:
+        with open(in_path, "wb") as infile:
+            infile.write(payload)
+
+        out_pattern = os.path.join(temp_dir.name, f"chunk_%03d{out_suffix}")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            in_path,
+            "-ac",
+            str(channels),
+            "-ar",
+            str(sample_rate),
+            "-b:a",
+            bitrate,
+            "-f",
+            "segment",
+            "-segment_time",
+            str(segment_seconds),
+            "-reset_timestamps",
+            "1",
+            out_pattern,
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode != 0:
+            error_msg = result.stderr.decode(errors="ignore").strip()
+            raise RuntimeError(f"오디오 분할 실패: {error_msg or 'ffmpeg 오류'}")
+
+        chunks = []
+        for path in sorted(Path(temp_dir.name).glob(f"chunk_*{out_suffix}")):
+            data = path.read_bytes()
+            if not data:
+                continue
+            chunks.append((data, f"audio/{STT_COMPRESS_FORMAT}", path.name))
+    except FileNotFoundError as exc:
+        raise RuntimeError("서버에 ffmpeg가 없어 오디오 분할을 수행할 수 없습니다.") from exc
+    finally:
+        try:
+            os.remove(in_path)
+        except OSError:
+            pass
+        temp_dir.cleanup()
+
+    if not chunks:
+        raise RuntimeError("오디오 분할 결과가 없습니다.")
+    return chunks
 
 
 def _request_transcription(
@@ -214,6 +304,29 @@ def transcribe_audio(payload: bytes, filename: str, content_type: Optional[str] 
             )
 
     if STT_MAX_BYTES and len(payload) > STT_MAX_BYTES:
+        if STT_AUTO_SPLIT:
+            chunks = _split_audio_to_chunks(payload, filename)
+            results = []
+            for chunk_payload, chunk_type, chunk_name in chunks:
+                data = _request_transcription(
+                    endpoint,
+                    api_key,
+                    model,
+                    language,
+                    chunk_payload,
+                    chunk_name,
+                    chunk_type,
+                )
+                try:
+                    parsed = json.loads(data)
+                except json.JSONDecodeError:
+                    results.append(data.strip())
+                else:
+                    if isinstance(parsed, dict) and "text" in parsed:
+                        results.append(parsed["text"].strip())
+                    else:
+                        results.append(data.strip())
+            return "\n".join([line for line in results if line])
         max_mb = STT_MAX_BYTES / (1024 * 1024)
         raise RuntimeError(f"오디오 파일이 너무 큽니다. {max_mb:.0f}MB 이하로 줄여주세요.")
 
@@ -234,6 +347,29 @@ def transcribe_audio(payload: bytes, filename: str, content_type: Optional[str] 
                         f"오디오 파일이 너무 큽니다. {max_mb:.0f}MB 이하로 줄여주세요."
                     ) from exc
                 continue
+            if exc.code == 413 and STT_AUTO_SPLIT:
+                chunks = _split_audio_to_chunks(payload, filename)
+                results = []
+                for chunk_payload, chunk_type, chunk_name in chunks:
+                    chunk_data = _request_transcription(
+                        endpoint,
+                        api_key,
+                        model,
+                        language,
+                        chunk_payload,
+                        chunk_name,
+                        chunk_type,
+                    )
+                    try:
+                        parsed = json.loads(chunk_data)
+                    except json.JSONDecodeError:
+                        results.append(chunk_data.strip())
+                    else:
+                        if isinstance(parsed, dict) and "text" in parsed:
+                            results.append(parsed["text"].strip())
+                        else:
+                            results.append(chunk_data.strip())
+                return "\n".join([line for line in results if line])
             try:
                 error_body = exc.read().decode()
             except Exception:

@@ -37,6 +37,8 @@ STT_ENDPOINT = os.getenv("STT_ENDPOINT", "")
 STT_TIMEOUT = int(os.getenv("STT_TIMEOUT", "60"))
 STT_MAX_BYTES = int(os.getenv("STT_MAX_BYTES", str(25 * 1024 * 1024)))
 STT_AUTO_COMPRESS = os.getenv("STT_AUTO_COMPRESS", "true").lower() == "true"
+STT_AUTO_SPLIT = os.getenv("STT_AUTO_SPLIT", "true").lower() == "true"
+STT_CHUNK_SECONDS = int(os.getenv("STT_CHUNK_SECONDS", "180"))
 STT_COMPRESS_FORMAT = os.getenv("STT_COMPRESS_FORMAT", "mp3")
 STT_COMPRESS_BITRATE = os.getenv("STT_COMPRESS_BITRATE", "32k")
 STT_COMPRESS_SAMPLE_RATE = int(os.getenv("STT_COMPRESS_SAMPLE_RATE", "16000"))
