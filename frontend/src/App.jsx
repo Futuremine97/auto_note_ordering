@@ -97,6 +97,8 @@ function useResizeObserver(ref, onResize) {
   }, [ref, onResize]);
 }
 
+const OUTLIER_THRESHOLD = 0.85;
+
 function Cluster3D({ points, height = 320 }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -126,12 +128,19 @@ function Cluster3D({ points, height = 320 }) {
       ...ys.map((value) => Math.abs(value - center.y)),
       ...zs.map((value) => Math.abs(value - center.z))
     );
-    return points.map((point) => ({
-      ...point,
-      nx: (point.x - center.x) / maxRange,
-      ny: (point.y - center.y) / maxRange,
-      nz: (point.z - center.z) / maxRange,
-    }));
+    return points.map((point) => {
+      const nx = (point.x - center.x) / maxRange;
+      const ny = (point.y - center.y) / maxRange;
+      const nz = (point.z - center.z) / maxRange;
+      const dist = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      return {
+        ...point,
+        nx,
+        ny,
+        nz,
+        outlier: dist >= OUTLIER_THRESHOLD,
+      };
+    });
   }, [points]);
 
   useEffect(() => {
@@ -194,16 +203,58 @@ function Cluster3D({ points, height = 320 }) {
       ctx.fillText(label, target.sx + 4, target.sy - 4);
     };
 
-    drawAxis(axisX, "rgba(232, 93, 93, 0.9)", "X");
-    drawAxis(axisY, "rgba(88, 181, 110, 0.9)", "Y");
-    drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "Z");
+    const drawGridLine = (start, end) => {
+      const a = projectPoint(start[0], start[1], start[2]);
+      const b = projectPoint(end[0], end[1], end[2]);
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(120, 120, 140, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.stroke();
+    };
+
+    const gridTicks = [-1, -0.5, 0, 0.5, 1];
+    // Grid on three main planes (back, left, bottom)
+    for (const t of gridTicks) {
+      drawGridLine([-1, t, -1], [1, t, -1]);
+      drawGridLine([t, -1, -1], [t, 1, -1]);
+
+      drawGridLine([-1, -1, t], [1, -1, t]);
+      drawGridLine([t, -1, -1], [t, -1, 1]);
+
+      drawGridLine([-1, t, -1], [-1, t, 1]);
+      drawGridLine([-1, -1, t], [-1, 1, t]);
+    }
+
+    drawAxis(axisX, "rgba(232, 93, 93, 0.9)", "PC1");
+    drawAxis(axisY, "rgba(88, 181, 110, 0.9)", "PC2");
+    drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "PC3");
 
     for (const point of projected) {
-      ctx.beginPath();
-      ctx.fillStyle = clusterColor(point.cluster_id ?? "미분류");
-      ctx.globalAlpha = 0.85;
-      ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.globalAlpha = 0.9;
+      if (point.outlier) {
+        const spikes = 5;
+        const outer = point.r * 1.6;
+        const inner = point.r * 0.75;
+        ctx.beginPath();
+        for (let i = 0; i < spikes * 2; i += 1) {
+          const angle = (Math.PI / spikes) * i;
+          const radius = i % 2 === 0 ? outer : inner;
+          const x = point.sx + Math.cos(angle) * radius;
+          const y = point.sy + Math.sin(angle) * radius;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = "rgba(235, 72, 72, 0.9)";
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(54, 101, 255, 0.7)";
+        ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }, [normalized, rotation, zoom, size]);
@@ -305,6 +356,7 @@ function Cluster3D({ points, height = 320 }) {
             <strong>이미지 #{hovered.id}</strong>
             <span>페이지: {hovered.page_number ?? "미인식"}</span>
             <span>클러스터: {hovered.cluster_id ?? "미분류"}</span>
+            <span>{hovered.outlier ? "Outlier" : "Normal"}</span>
           </div>
         </div>
       )}
@@ -960,16 +1012,15 @@ export default function App() {
         ) : (
           <>
             <Cluster3D points={embeddingPoints} />
-            <div className="cluster-legend">
-              {clusterStats.list.map((item) => (
-                <div key={item.key} className="cluster-legend-item">
-                  <span
-                    className="cluster-legend-dot"
-                    style={{ background: clusterColor(item.key) }}
-                  />
-                  {item.label} · {item.count}장
-                </div>
-              ))}
+            <div className="embedding-legend">
+              <div className="embedding-legend-item">
+                <span className="embedding-legend-dot" />
+                normal
+              </div>
+              <div className="embedding-legend-item">
+                <span className="embedding-legend-star">★</span>
+                outlier
+              </div>
             </div>
           </>
         )}
