@@ -97,7 +97,7 @@ function useResizeObserver(ref, onResize) {
   }, [ref, onResize]);
 }
 
-function Cluster3D({ points, height = 320 }) {
+function Cluster3D({ points, outlierIds = new Set(), height = 360 }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const projectedRef = useRef([]);
@@ -162,16 +162,17 @@ function Cluster3D({ points, height = 320 }) {
         sx: centerX + xz * perspective,
         sy: centerY - yz * perspective,
         depth,
-        r: Math.max(2, 4 * perspective),
+        r: Math.max(2, 3.4 / depth + 1.2),
       };
     };
 
     const projected = normalized.map((point) => {
-      let x = point.nx;
-      let y = point.ny;
-      let z = point.nz;
-      const projectedPoint = projectPoint(x, y, z);
-      return { ...point, ...projectedPoint };
+      const projectedPoint = projectPoint(point.nx, point.ny, point.nz);
+      return {
+        ...point,
+        ...projectedPoint,
+        isOutlier: outlierIds.has(point.id),
+      };
     });
 
     projected.sort((a, b) => a.depth - b.depth);
@@ -218,19 +219,44 @@ function Cluster3D({ points, height = 320 }) {
       drawGridLine([-1, -1, t], [-1, 1, t]);
     }
 
-    drawAxis(axisX, "rgba(232, 93, 93, 0.9)", "PC1");
-    drawAxis(axisY, "rgba(88, 181, 110, 0.9)", "PC2");
-    drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "PC3");
+    drawAxis(axisX, "rgba(232, 93, 93, 0.9)", "Principal Component 1");
+    drawAxis(axisY, "rgba(88, 181, 110, 0.9)", "Principal Component 2");
+    drawAxis(axisZ, "rgba(82, 131, 255, 0.9)", "Principal Component 3");
+
+    const drawStar = (x, y, radius) => {
+      const spikes = 5;
+      const step = Math.PI / spikes;
+      let rot = (Math.PI / 2) * 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y - radius);
+      for (let i = 0; i < spikes; i += 1) {
+        ctx.lineTo(x + Math.cos(rot) * radius, y + Math.sin(rot) * radius);
+        rot += step;
+        ctx.lineTo(
+          x + Math.cos(rot) * (radius * 0.45),
+          y + Math.sin(rot) * (radius * 0.45)
+        );
+        rot += step;
+      }
+      ctx.lineTo(x, y - radius);
+      ctx.closePath();
+      ctx.fill();
+    };
 
     for (const point of projected) {
-      ctx.beginPath();
-      ctx.fillStyle = "rgba(54, 101, 255, 0.75)";
       ctx.globalAlpha = 0.9;
-      ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
-      ctx.fill();
+      if (point.isOutlier) {
+        ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
+        drawStar(point.sx, point.sy, point.r * 1.35);
+      } else {
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(59, 130, 246, 0.75)";
+        ctx.arc(point.sx, point.sy, point.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
-  }, [normalized, rotation, zoom, size]);
+  }, [normalized, rotation, zoom, size, outlierIds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -393,6 +419,24 @@ export default function App() {
     const max = Math.max(1, ...list.map((item) => item.count));
     return { list, max };
   }, [records]);
+
+  const embeddingOutliers = useMemo(() => {
+    if (embeddingPoints.length === 0) return new Set();
+    const counts = new Map();
+    for (const point of embeddingPoints) {
+      const key = point.cluster_id ?? "미분류";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const outliers = new Set();
+    for (const point of embeddingPoints) {
+      const key = point.cluster_id ?? "미분류";
+      const size = counts.get(key) || 0;
+      if (point.cluster_id == null || size <= 1) {
+        outliers.add(point.id);
+      }
+    }
+    return outliers;
+  }, [embeddingPoints]);
 
   async function fetchRecords() {
     const res = await fetch(`${API_BASE}/images`);
@@ -960,7 +1004,7 @@ export default function App() {
           <div>
             <h2>사진 3D 시각화</h2>
             <p className="muted">
-              OCR 특징 벡터를 3차원으로 축소해 사진 데이터 분포를 확인합니다.
+              OCR 특징 벡터를 3차원으로 축소해 사진 데이터 분포를 산점도로 확인합니다.
             </p>
             <p className="muted">
               점 위에 마우스를 올리면 해당 사진이 미리보기로 표시됩니다.
@@ -982,11 +1026,15 @@ export default function App() {
           </p>
         ) : (
           <>
-            <Cluster3D points={embeddingPoints} />
+            <Cluster3D points={embeddingPoints} outlierIds={embeddingOutliers} />
             <div className="embedding-legend">
               <div className="embedding-legend-item">
                 <span className="embedding-legend-dot" />
-                각 점 = 사진 1장
+                normal
+              </div>
+              <div className="embedding-legend-item">
+                <span className="embedding-legend-star">★</span>
+                outlier (클러스터 단독/미분류)
               </div>
             </div>
           </>
