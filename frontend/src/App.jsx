@@ -579,6 +579,39 @@ export default function App() {
     return outliers;
   }, [embeddingPoints]);
 
+  const clusterCenterIds = useMemo(() => {
+    if (embeddingPoints.length === 0) return new Set();
+    const byCluster = new Map();
+    for (const point of embeddingPoints) {
+      if (point.cluster_id == null) continue;
+      if (!byCluster.has(point.cluster_id)) {
+        byCluster.set(point.cluster_id, []);
+      }
+      byCluster.get(point.cluster_id).push(point);
+    }
+    const centers = new Set();
+    for (const [, points] of byCluster.entries()) {
+      if (points.length < 2) continue;
+      const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+      const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+      const cz = points.reduce((sum, p) => sum + p.z, 0) / points.length;
+      let best = null;
+      let bestDist = Infinity;
+      for (const point of points) {
+        const dx = point.x - cx;
+        const dy = point.y - cy;
+        const dz = point.z - cz;
+        const dist = dx * dx + dy * dy + dz * dz;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = point;
+        }
+      }
+      if (best) centers.add(best.id);
+    }
+    return centers;
+  }, [embeddingPoints]);
+
   async function fetchRecords() {
     const res = await fetch(`${API_BASE}/images`);
     if (!res.ok) {
@@ -1323,8 +1356,15 @@ export default function App() {
             <div className="thumbs">
               {group.items.map((item) => {
                 const isRevealed = isAuthed && revealedImages.includes(item.id);
+                const isCenter = clusterCenterIds.has(item.id);
+                const figureClass = [
+                  isRevealed ? "" : "locked",
+                  isCenter ? "cluster-center" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
                 return (
-                  <figure key={item.id} className={isRevealed ? "" : "locked"}>
+                  <figure key={item.id} className={figureClass}>
                     {isRevealed ? (
                       <img
                         src={`${API_BASE}/images/${item.id}/file`}

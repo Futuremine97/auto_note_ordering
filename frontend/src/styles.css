@@ -553,6 +553,12 @@ figure img {
   border: 1px solid var(--border);
 }
 
+figure.cluster-center img,
+figure.cluster-center .thumb-placeholder {
+  border: 2px solid #f5c542;
+  box-shadow: 0 0 0 2px rgba(245, 197, 66, 0.25);
+}
+
 .thumb-placeholder {
   width: 100%;
   aspect-ratio: 2 / 3;
