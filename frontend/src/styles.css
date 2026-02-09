@@ -343,6 +343,40 @@ h1 {
   font-size: 12px;
 }
 
+.embedding-views {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.embedding-view h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.cluster-2d-wrap {
+  width: 100%;
+  border: 1px solid #e6dccf;
+  border-radius: 16px;
+  background: #fdfbf7;
+  overflow: hidden;
+}
+
+.cluster-2d {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cluster-2d-axis {
+  font-size: 11px;
+  fill: #6f6a63;
+}
+
 .panel h2 {
   margin: 0 0 4px;
   font-size: 20px;

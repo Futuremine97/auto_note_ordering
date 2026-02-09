@@ -361,6 +361,147 @@ function Cluster3D({ points, outlierIds = new Set(), height = 360 }) {
   );
 }
 
+function Cluster2D({ points, outlierIds = new Set(), height = 320 }) {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ width: 0, height });
+
+  useResizeObserver(containerRef, (rect) => {
+    setSize({ width: rect.width, height });
+  });
+
+  const normalized = useMemo(() => {
+    if (!points.length) return [];
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const center = {
+      x: xs.reduce((a, b) => a + b, 0) / xs.length,
+      y: ys.reduce((a, b) => a + b, 0) / ys.length,
+    };
+    const maxRange = Math.max(
+      1,
+      ...xs.map((value) => Math.abs(value - center.x)),
+      ...ys.map((value) => Math.abs(value - center.y))
+    );
+    return points.map((point) => ({
+      ...point,
+      nx: (point.x - center.x) / maxRange,
+      ny: (point.y - center.y) / maxRange,
+    }));
+  }, [points]);
+
+  const padding = 42;
+  const width = Math.max(size.width, 1);
+  const heightPx = height;
+  const ticks = [-1, -0.5, 0, 0.5, 1];
+
+  const toScreen = (nx, ny) => {
+    const x = padding + ((nx + 1) / 2) * (width - padding * 2);
+    const y = padding + (1 - (ny + 1) / 2) * (heightPx - padding * 2);
+    return { x, y };
+  };
+
+  const starPath = (cx, cy, radius) => {
+    const spikes = 5;
+    const step = Math.PI / spikes;
+    let rot = (Math.PI / 2) * 3;
+    let path = `M ${cx} ${cy - radius}`;
+    for (let i = 0; i < spikes; i += 1) {
+      path += ` L ${cx + Math.cos(rot) * radius} ${cy + Math.sin(rot) * radius}`;
+      rot += step;
+      path += ` L ${cx + Math.cos(rot) * radius * 0.45} ${cy + Math.sin(rot) * radius * 0.45}`;
+      rot += step;
+    }
+    path += " Z";
+    return path;
+  };
+
+  return (
+    <div className="cluster-2d-wrap" ref={containerRef} style={{ height }}>
+      <svg
+        className="cluster-2d"
+        width={width}
+        height={heightPx}
+        viewBox={`0 0 ${width} ${heightPx}`}
+      >
+        <rect
+          x={0}
+          y={0}
+          width={width}
+          height={heightPx}
+          fill="transparent"
+        />
+        {ticks.map((t) => {
+          const x = padding + ((t + 1) / 2) * (width - padding * 2);
+          const y = padding + (1 - (t + 1) / 2) * (heightPx - padding * 2);
+          return (
+            <g key={`grid-${t}`}>
+              <line
+                x1={x}
+                y1={padding}
+                x2={x}
+                y2={heightPx - padding}
+                stroke="rgba(120,120,140,0.25)"
+                strokeWidth="1"
+              />
+              <line
+                x1={padding}
+                y1={y}
+                x2={width - padding}
+                y2={y}
+                stroke="rgba(120,120,140,0.25)"
+                strokeWidth="1"
+              />
+            </g>
+          );
+        })}
+        <line
+          x1={padding}
+          y1={heightPx - padding}
+          x2={width - padding}
+          y2={heightPx - padding}
+          stroke="rgba(232,93,93,0.9)"
+          strokeWidth="1.2"
+        />
+        <line
+          x1={padding}
+          y1={padding}
+          x2={padding}
+          y2={heightPx - padding}
+          stroke="rgba(88,181,110,0.9)"
+          strokeWidth="1.2"
+        />
+        <text x={width - padding + 8} y={heightPx - padding + 4} className="cluster-2d-axis">
+          PC1
+        </text>
+        <text x={padding - 28} y={padding - 8} className="cluster-2d-axis">
+          PC2
+        </text>
+        {normalized.map((point) => {
+          const { x, y } = toScreen(point.nx, point.ny);
+          if (outlierIds.has(point.id)) {
+            return (
+              <path
+                key={point.id}
+                d={starPath(x, y, 6)}
+                fill="rgba(239, 68, 68, 0.9)"
+              />
+            );
+          }
+          return (
+            <circle
+              key={point.id}
+              cx={x}
+              cy={y}
+              r={3.2}
+              fill="rgba(59, 130, 246, 0.75)"
+            />
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 export default function App() {
   const [records, setRecords] = useState([]);
   const [books, setBooks] = useState([]);
@@ -1026,7 +1167,16 @@ export default function App() {
           </p>
         ) : (
           <>
-            <Cluster3D points={embeddingPoints} outlierIds={embeddingOutliers} />
+            <div className="embedding-views">
+              <div className="embedding-view">
+                <h3>3D Scatter</h3>
+                <Cluster3D points={embeddingPoints} outlierIds={embeddingOutliers} />
+              </div>
+              <div className="embedding-view">
+                <h3>2D Scatter (PC1 vs PC2)</h3>
+                <Cluster2D points={embeddingPoints} outlierIds={embeddingOutliers} />
+              </div>
+            </div>
             <div className="embedding-legend">
               <div className="embedding-legend-item">
                 <span className="embedding-legend-dot" />
