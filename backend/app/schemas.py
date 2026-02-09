@@ -110,6 +110,7 @@ class EmbeddingRequest(BaseModel):
     n_values: Optional[List[int]] = None
     dim: Optional[int] = 128
     limit: Optional[int] = None
+    loss: Optional[str] = None
 
 
 class EmbeddingPoint(BaseModel):
@@ -126,6 +127,27 @@ class EmbeddingPoint(BaseModel):
 class EmbeddingResponse(BaseModel):
     total: int
     points: List[EmbeddingPoint]
+
+
+class EmbeddingPoint2D(BaseModel):
+    id: int
+    x: float
+    y: float
+    cluster_id: Optional[int]
+    book_id: Optional[int]
+    predicted_book_id: Optional[int]
+    page_number: Optional[int]
+
+
+class EmbeddingVariant(BaseModel):
+    points_3d: List[EmbeddingPoint]
+    points_2d: List[EmbeddingPoint2D]
+
+
+class EmbeddingCompareResponse(BaseModel):
+    total: int
+    l1: EmbeddingVariant
+    l2: EmbeddingVariant
 
 
 class LlmMessage(BaseModel):

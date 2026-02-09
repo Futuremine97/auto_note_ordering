@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -514,7 +514,8 @@ export default function App() {
   const [chatPrompt, setChatPrompt] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
-  const [embeddingPoints, setEmbeddingPoints] = useState([]);
+  const [embeddingL1, setEmbeddingL1] = useState({ points3d: [], points2d: [] });
+  const [embeddingL2, setEmbeddingL2] = useState({ points3d: [], points2d: [] });
   const [embeddingLoading, setEmbeddingLoading] = useState(false);
   const [embeddingError, setEmbeddingError] = useState("");
   const [audioText, setAudioText] = useState("");
@@ -534,6 +535,7 @@ export default function App() {
   const pendingAuthAction = useRef(null);
   const [revealedImages, setRevealedImages] = useState([]);
   const uploadDisabled = loading || (!isAuthed && authChecked);
+  const embeddingPoints = embeddingL2.points3d;
 
   const grouped = useMemo(() => {
     return viewMode === "cluster"
@@ -561,15 +563,15 @@ export default function App() {
     return { list, max };
   }, [records]);
 
-  const embeddingOutliers = useMemo(() => {
-    if (embeddingPoints.length === 0) return new Set();
+  const buildOutlierSet = useCallback((points) => {
+    if (!points || points.length === 0) return new Set();
     const counts = new Map();
-    for (const point of embeddingPoints) {
+    for (const point of points) {
       const key = point.cluster_id ?? "미분류";
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     const outliers = new Set();
-    for (const point of embeddingPoints) {
+    for (const point of points) {
       const key = point.cluster_id ?? "미분류";
       const size = counts.get(key) || 0;
       if (point.cluster_id == null || size <= 1) {
@@ -577,7 +579,17 @@ export default function App() {
       }
     }
     return outliers;
-  }, [embeddingPoints]);
+  }, []);
+
+  const l1Outliers = useMemo(
+    () => buildOutlierSet(embeddingL1.points3d),
+    [embeddingL1.points3d, buildOutlierSet]
+  );
+
+  const l2Outliers = useMemo(
+    () => buildOutlierSet(embeddingL2.points3d),
+    [embeddingL2.points3d, buildOutlierSet]
+  );
 
   const clusterCenterIds = useMemo(() => {
     if (embeddingPoints.length === 0) return new Set();
@@ -632,18 +644,20 @@ export default function App() {
 
   async function fetchEmbedding() {
     if (!isAuthed) {
-      setEmbeddingPoints([]);
+      setEmbeddingL1({ points3d: [], points2d: [] });
+      setEmbeddingL2({ points3d: [], points2d: [] });
       return;
     }
     if (records.length === 0) {
-      setEmbeddingPoints([]);
+      setEmbeddingL1({ points3d: [], points2d: [] });
+      setEmbeddingL2({ points3d: [], points2d: [] });
       setEmbeddingError("");
       return;
     }
     setEmbeddingError("");
     setEmbeddingLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/images/cluster-embedding`, {
+      const res = await fetch(`${API_BASE}/images/cluster-embedding-compare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -653,7 +667,14 @@ export default function App() {
         throw new Error(text || "3D 시각화 데이터를 불러오지 못했습니다.");
       }
       const data = await res.json();
-      setEmbeddingPoints(data.points || []);
+      setEmbeddingL1({
+        points3d: data.l1?.points_3d || [],
+        points2d: data.l1?.points_2d || [],
+      });
+      setEmbeddingL2({
+        points3d: data.l2?.points_3d || [],
+        points2d: data.l2?.points_2d || [],
+      });
     } catch (err) {
       setEmbeddingError(err.message);
     } finally {
@@ -1178,7 +1199,7 @@ export default function App() {
           <div>
             <h2>사진 3D 시각화</h2>
             <p className="muted">
-              OCR 특징 벡터를 3차원으로 축소해 사진 데이터 분포를 산점도로 확인합니다.
+              SOTA 임베딩 + 오토인코더로 학습한 L1/L2 representation을 3D/2D 산점도로 확인합니다.
             </p>
             <p className="muted">
               점 위에 마우스를 올리면 해당 사진이 미리보기로 표시됩니다.
@@ -1186,7 +1207,7 @@ export default function App() {
           </div>
           <div className="cluster-embedding-actions">
             <button type="button" onClick={fetchEmbedding} disabled={!isAuthed || embeddingLoading}>
-              {embeddingLoading ? "불러오는 중..." : "3D 새로고침"}
+              {embeddingLoading ? "불러오는 중..." : "임베딩 새로고침"}
             </button>
           </div>
         </div>
@@ -1194,7 +1215,7 @@ export default function App() {
           <p className="muted">비밀번호를 입력하면 3D 시각화를 확인할 수 있습니다.</p>
         ) : embeddingError ? (
           <div className="error">{embeddingError}</div>
-        ) : embeddingPoints.length === 0 ? (
+        ) : embeddingL1.points3d.length === 0 && embeddingL2.points3d.length === 0 ? (
           <p className="muted">
             아직 시각화 데이터가 없습니다. 이미지 업로드 또는 클러스터링 이후 확인하세요.
           </p>
@@ -1202,12 +1223,20 @@ export default function App() {
           <>
             <div className="embedding-views">
               <div className="embedding-view">
-                <h3>3D Scatter</h3>
-                <Cluster3D points={embeddingPoints} outlierIds={embeddingOutliers} />
+                <h3>L1 Loss · 3D Scatter</h3>
+                <Cluster3D points={embeddingL1.points3d} outlierIds={l1Outliers} />
               </div>
               <div className="embedding-view">
-                <h3>2D Scatter (PC1 vs PC2)</h3>
-                <Cluster2D points={embeddingPoints} outlierIds={embeddingOutliers} />
+                <h3>L1 Loss · 2D Scatter</h3>
+                <Cluster2D points={embeddingL1.points2d} outlierIds={l1Outliers} />
+              </div>
+              <div className="embedding-view">
+                <h3>L2 Loss · 3D Scatter</h3>
+                <Cluster3D points={embeddingL2.points3d} outlierIds={l2Outliers} />
+              </div>
+              <div className="embedding-view">
+                <h3>L2 Loss · 2D Scatter</h3>
+                <Cluster2D points={embeddingL2.points2d} outlierIds={l2Outliers} />
               </div>
             </div>
             <div className="embedding-legend">

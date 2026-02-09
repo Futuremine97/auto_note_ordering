@@ -57,3 +57,11 @@ PHOTO_PASSWORD = os.getenv("PHOTO_PASSWORD", "")
 AUTH_SECRET = os.getenv("AUTH_SECRET", "change-me")
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 AUTH_COOKIE_TTL_HOURS = int(os.getenv("AUTH_COOKIE_TTL_HOURS", "72"))
+
+EMBEDDING_MODEL_NAME = os.getenv(
+    "EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small"
+)
+EMBEDDING_CACHE_DIR = os.getenv("EMBEDDING_CACHE_DIR", str(BASE_DIR / "cache"))
+EMBEDDING_TRAIN_EPOCHS = int(os.getenv("EMBEDDING_TRAIN_EPOCHS", "25"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+EMBEDDING_LEARNING_RATE = float(os.getenv("EMBEDDING_LEARNING_RATE", "0.001"))

@@ -32,6 +32,9 @@ from .schemas import (
     EmbeddingRequest,
     EmbeddingResponse,
     EmbeddingPoint,
+    EmbeddingPoint2D,
+    EmbeddingVariant,
+    EmbeddingCompareResponse,
     LlmDiscussRequest,
     LlmDiscussResponse,
     AuthLogin,
@@ -46,7 +49,7 @@ from .ngram import (
     build_symbol_vocab,
     extract_ngrams,
 )
-from .embedding import build_embeddings_3d
+from .embedding import build_embedding_variant, build_embeddings_3d
 from .llm import build_ocr_context, build_image_payloads, call_llm
 from .auth import AUTH_COOKIE_NAME, create_auth_cookie, require_auth, verify_auth_cookie
 from .config import AUTH_COOKIE_SECURE, AUTH_COOKIE_TTL_HOURS, PHOTO_PASSWORD
@@ -633,8 +636,7 @@ def cluster_images_root(payload: ClusterRequest, db: Session = Depends(get_db)):
 @app.post("/api/images/cluster-embedding", response_model=EmbeddingResponse)
 def cluster_embedding(payload: EmbeddingRequest, request: Request, db: Session = Depends(get_db)):
     require_auth(request)
-    n_values = payload.n_values or [3, 4, 5]
-    dim = payload.dim or 128
+    loss_type = (payload.loss or "l2").lower()
 
     query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
     if payload.limit:
@@ -645,10 +647,10 @@ def cluster_embedding(payload: EmbeddingRequest, request: Request, db: Session =
         raise HTTPException(status_code=400, detail="No OCR images to embed")
 
     texts = [record.ocr_text or "" for record in images]
-    coords = build_embeddings_3d(texts, n_values=n_values, dim=dim)
+    coords3d, _coords2d = build_embedding_variant(texts, loss_type=loss_type)
 
     points = []
-    for record, (x, y, z) in zip(images, coords):
+    for record, (x, y, z) in zip(images, coords3d):
         points.append(
             EmbeddingPoint(
                 id=record.id,
@@ -663,6 +665,70 @@ def cluster_embedding(payload: EmbeddingRequest, request: Request, db: Session =
         )
 
     return EmbeddingResponse(total=len(points), points=points)
+
+
+@app.post("/api/images/cluster-embedding-compare", response_model=EmbeddingCompareResponse)
+def cluster_embedding_compare(
+    payload: EmbeddingRequest, request: Request, db: Session = Depends(get_db)
+):
+    require_auth(request)
+
+    query = db.query(ImageRecord).filter(ImageRecord.ocr_text.isnot(None))
+    if payload.limit:
+        query = query.limit(payload.limit)
+    images = query.order_by(ImageRecord.id.asc()).all()
+
+    if not images:
+        raise HTTPException(status_code=400, detail="No OCR images to embed")
+
+    texts = [record.ocr_text or "" for record in images]
+    l1_3d, l1_2d = build_embedding_variant(texts, loss_type="l1")
+    l2_3d, l2_2d = build_embedding_variant(texts, loss_type="l2")
+
+    def build_points_3d(coords):
+        items = []
+        for record, (x, y, z) in zip(images, coords):
+            items.append(
+                EmbeddingPoint(
+                    id=record.id,
+                    x=float(x),
+                    y=float(y),
+                    z=float(z),
+                    cluster_id=record.cluster_id,
+                    book_id=record.book_id,
+                    predicted_book_id=record.predicted_book_id,
+                    page_number=record.page_number,
+                )
+            )
+        return items
+
+    def build_points_2d(coords):
+        items = []
+        for record, (x, y) in zip(images, coords):
+            items.append(
+                EmbeddingPoint2D(
+                    id=record.id,
+                    x=float(x),
+                    y=float(y),
+                    cluster_id=record.cluster_id,
+                    book_id=record.book_id,
+                    predicted_book_id=record.predicted_book_id,
+                    page_number=record.page_number,
+                )
+            )
+        return items
+
+    return EmbeddingCompareResponse(
+        total=len(images),
+        l1=EmbeddingVariant(
+            points_3d=build_points_3d(l1_3d),
+            points_2d=build_points_2d(l1_2d),
+        ),
+        l2=EmbeddingVariant(
+            points_3d=build_points_3d(l2_3d),
+            points_2d=build_points_2d(l2_2d),
+        ),
+    )
 
 
 def retrain_all_books(db: Session, n_values: List[int]) -> None:
