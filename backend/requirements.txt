@@ -8,5 +8,4 @@ pillow-heif==0.17.0
 pytesseract==0.3.10
 python-dotenv==1.0.1
 numpy==1.26.4
-torch==2.2.2
 sentence-transformers==2.7.0
