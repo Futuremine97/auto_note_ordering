@@ -518,6 +518,9 @@ export default function App() {
   const [embeddingL2, setEmbeddingL2] = useState({ points3d: [], points2d: [] });
   const [embeddingLoading, setEmbeddingLoading] = useState(false);
   const [embeddingError, setEmbeddingError] = useState("");
+  const [embeddingStatus, setEmbeddingStatus] = useState("");
+  const [embeddingStatusMessage, setEmbeddingStatusMessage] = useState("");
+  const embeddingRetryRef = useRef(null);
   const [audioText, setAudioText] = useState("");
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
@@ -536,6 +539,8 @@ export default function App() {
   const [revealedImages, setRevealedImages] = useState([]);
   const uploadDisabled = loading || (!isAuthed && authChecked);
   const embeddingPoints = embeddingL2.points3d;
+  const isEmbeddingProcessing =
+    embeddingLoading || embeddingStatus === "processing";
 
   const grouped = useMemo(() => {
     return viewMode === "cluster"
@@ -646,15 +651,21 @@ export default function App() {
     if (!isAuthed) {
       setEmbeddingL1({ points3d: [], points2d: [] });
       setEmbeddingL2({ points3d: [], points2d: [] });
+      setEmbeddingStatus("");
+      setEmbeddingStatusMessage("");
       return;
     }
     if (records.length === 0) {
       setEmbeddingL1({ points3d: [], points2d: [] });
       setEmbeddingL2({ points3d: [], points2d: [] });
       setEmbeddingError("");
+      setEmbeddingStatus("");
+      setEmbeddingStatusMessage("");
       return;
     }
     setEmbeddingError("");
+    setEmbeddingStatus("");
+    setEmbeddingStatusMessage("");
     setEmbeddingLoading(true);
     try {
       const res = await fetch(`${API_BASE}/images/cluster-embedding-compare`, {
@@ -662,6 +673,22 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+      if (res.status === 202) {
+        const data = await res.json();
+        setEmbeddingStatus("processing");
+        setEmbeddingStatusMessage(
+          data?.detail ||
+            "임베딩 계산 중입니다. 첫 호출은 수 분이 걸릴 수 있습니다."
+        );
+        if (embeddingRetryRef.current) {
+          clearTimeout(embeddingRetryRef.current);
+        }
+        embeddingRetryRef.current = setTimeout(() => {
+          embeddingRetryRef.current = null;
+          fetchEmbedding();
+        }, 5000);
+        return;
+      }
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || "3D 시각화 데이터를 불러오지 못했습니다.");
@@ -675,8 +702,12 @@ export default function App() {
         points3d: data.l2?.points_3d || [],
         points2d: data.l2?.points_2d || [],
       });
+      setEmbeddingStatus("ready");
+      setEmbeddingStatusMessage("");
     } catch (err) {
       setEmbeddingError(err.message);
+      setEmbeddingStatus("");
+      setEmbeddingStatusMessage("");
     } finally {
       setEmbeddingLoading(false);
     }
@@ -713,6 +744,14 @@ export default function App() {
     if (!authChecked || !isAuthed) return;
     fetchEmbedding();
   }, [authChecked, isAuthed, records.length]);
+
+  useEffect(() => {
+    return () => {
+      if (embeddingRetryRef.current) {
+        clearTimeout(embeddingRetryRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!chatEndRef.current) return;
@@ -1206,15 +1245,24 @@ export default function App() {
             </p>
           </div>
           <div className="cluster-embedding-actions">
-            <button type="button" onClick={fetchEmbedding} disabled={!isAuthed || embeddingLoading}>
-              {embeddingLoading ? "불러오는 중..." : "임베딩 새로고침"}
+            <button
+              type="button"
+              onClick={fetchEmbedding}
+              disabled={!isAuthed || isEmbeddingProcessing}
+            >
+              {isEmbeddingProcessing ? "계산 중..." : "임베딩 새로고침"}
             </button>
           </div>
         </div>
+        {embeddingStatus === "processing" && embeddingStatusMessage && (
+          <p className="muted">{embeddingStatusMessage}</p>
+        )}
         {!isAuthed ? (
           <p className="muted">비밀번호를 입력하면 3D 시각화를 확인할 수 있습니다.</p>
         ) : embeddingError ? (
           <div className="error">{embeddingError}</div>
+        ) : embeddingStatus === "processing" ? (
+          <p className="muted">임베딩을 계산 중입니다. 완료되면 자동으로 갱신됩니다.</p>
         ) : embeddingL1.points3d.length === 0 && embeddingL2.points3d.length === 0 ? (
           <p className="muted">
             아직 시각화 데이터가 없습니다. 이미지 업로드 또는 클러스터링 이후 확인하세요.

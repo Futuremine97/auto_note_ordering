@@ -1,6 +1,6 @@
 import hashlib
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -104,6 +104,34 @@ def _cache_key(
     fingerprint = _texts_fingerprint(texts)
     raw = f"{EMBEDDING_MODEL_NAME}|{loss_type}|{epochs}|{batch_size}|{learning_rate}|{fingerprint}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def embedding_cache_key(
+    texts: List[str],
+    loss_type: str,
+    epochs: int = EMBEDDING_TRAIN_EPOCHS,
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+    learning_rate: float = EMBEDDING_LEARNING_RATE,
+) -> str:
+    return _cache_key(texts, loss_type, epochs, batch_size, learning_rate)
+
+
+def load_embedding_variant_if_cached(
+    texts: List[str],
+    loss_type: str = "l2",
+    epochs: int = EMBEDDING_TRAIN_EPOCHS,
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+    learning_rate: float = EMBEDDING_LEARNING_RATE,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    loss_type = (loss_type or "l2").lower()
+    key = _cache_key(texts, loss_type, epochs, batch_size, learning_rate)
+    cache_path = _build_cache_path(key)
+    if not cache_path.exists():
+        return None
+    data = np.load(cache_path)
+    coords3d = data["coords3d"].astype(np.float32)
+    coords2d = data["coords2d"].astype(np.float32)
+    return coords3d, coords2d
 
 
 def _encode_texts(texts: List[str]) -> np.ndarray:

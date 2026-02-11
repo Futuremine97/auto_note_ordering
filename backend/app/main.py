@@ -1,18 +1,25 @@
 import io
 import json
 import random
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import Depends, FastAPI, File, UploadFile, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from PIL import Image
 
-from .config import UPLOAD_DIR, OCR_WORKERS
+from .config import (
+    UPLOAD_DIR,
+    OCR_WORKERS,
+    EMBEDDING_TRAIN_EPOCHS,
+    EMBEDDING_BATCH_SIZE,
+    EMBEDDING_LEARNING_RATE,
+)
 from .db import Base, engine, get_db
 from .models import ImageRecord, Book, NgramVocab
 from .ocr import run_ocr, detect_page_number_from_regions, extract_page_number
@@ -35,6 +42,7 @@ from .schemas import (
     EmbeddingPoint2D,
     EmbeddingVariant,
     EmbeddingCompareResponse,
+    EmbeddingJobStatus,
     LlmDiscussRequest,
     LlmDiscussResponse,
     AuthLogin,
@@ -49,7 +57,12 @@ from .ngram import (
     build_symbol_vocab,
     extract_ngrams,
 )
-from .embedding import build_embedding_variant, build_embeddings_3d
+from .embedding import (
+    build_embedding_variant,
+    build_embeddings_3d,
+    embedding_cache_key,
+    load_embedding_variant_if_cached,
+)
 from .llm import build_ocr_context, build_image_payloads, call_llm
 from .auth import AUTH_COOKIE_NAME, create_auth_cookie, require_auth, verify_auth_cookie
 from .config import AUTH_COOKIE_SECURE, AUTH_COOKIE_TTL_HOURS, PHOTO_PASSWORD
@@ -59,6 +72,9 @@ from .tts import synthesize_speech
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Page OCR Sorter")
+
+EMBEDDING_JOBS = {}
+EMBEDDING_JOB_LOCK = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -667,9 +683,63 @@ def cluster_embedding(payload: EmbeddingRequest, request: Request, db: Session =
     return EmbeddingResponse(total=len(points), points=points)
 
 
-@app.post("/api/images/cluster-embedding-compare", response_model=EmbeddingCompareResponse)
+def _embedding_compare_key(
+    texts: List[str],
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+) -> str:
+    key_l1 = embedding_cache_key(
+        texts, "l1", epochs=epochs, batch_size=batch_size, learning_rate=learning_rate
+    )
+    key_l2 = embedding_cache_key(
+        texts, "l2", epochs=epochs, batch_size=batch_size, learning_rate=learning_rate
+    )
+    return f"{key_l1}:{key_l2}"
+
+
+def _start_embedding_compare_job(
+    job_key: str,
+    texts: List[str],
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+) -> None:
+    def worker():
+        try:
+            build_embedding_variant(
+                texts,
+                loss_type="l1",
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+            )
+            build_embedding_variant(
+                texts,
+                loss_type="l2",
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+            )
+            status = "ready"
+        except Exception as exc:
+            status = f"error:{exc}"
+        with EMBEDDING_JOB_LOCK:
+            EMBEDDING_JOBS[job_key] = status
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+
+@app.post(
+    "/api/images/cluster-embedding-compare",
+    response_model=Union[EmbeddingCompareResponse, EmbeddingJobStatus],
+)
 def cluster_embedding_compare(
-    payload: EmbeddingRequest, request: Request, db: Session = Depends(get_db)
+    payload: EmbeddingRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    wait: bool = False,
 ):
     require_auth(request)
 
@@ -682,8 +752,73 @@ def cluster_embedding_compare(
         raise HTTPException(status_code=400, detail="No OCR images to embed")
 
     texts = [record.ocr_text or "" for record in images]
-    l1_3d, l1_2d = build_embedding_variant(texts, loss_type="l1")
-    l2_3d, l2_2d = build_embedding_variant(texts, loss_type="l2")
+
+    epochs = payload.epochs or EMBEDDING_TRAIN_EPOCHS
+    batch_size = payload.batch_size or EMBEDDING_BATCH_SIZE
+    learning_rate = payload.learning_rate or EMBEDDING_LEARNING_RATE
+
+    cached_l1 = load_embedding_variant_if_cached(
+        texts,
+        loss_type="l1",
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+    )
+    cached_l2 = load_embedding_variant_if_cached(
+        texts,
+        loss_type="l2",
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+    )
+
+    if cached_l1 and cached_l2:
+        l1_3d, l1_2d = cached_l1
+        l2_3d, l2_2d = cached_l2
+    else:
+        job_key = _embedding_compare_key(texts, epochs, batch_size, learning_rate)
+        with EMBEDDING_JOB_LOCK:
+            status = EMBEDDING_JOBS.get(job_key)
+
+        if status and status.startswith("error:"):
+            return EmbeddingJobStatus(
+                status="error", detail=status.replace("error:", "", 1)
+            )
+
+        if not wait:
+            with EMBEDDING_JOB_LOCK:
+                status = EMBEDDING_JOBS.get(job_key)
+                if status != "running":
+                    EMBEDDING_JOBS[job_key] = "running"
+                    _start_embedding_compare_job(
+                        job_key,
+                        texts,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                        learning_rate=learning_rate,
+                    )
+            return JSONResponse(
+                status_code=202,
+                content=EmbeddingJobStatus(
+                    status="processing",
+                    detail="Embedding is being computed. Please retry shortly.",
+                ).model_dump(),
+            )
+
+        l1_3d, l1_2d = build_embedding_variant(
+            texts,
+            loss_type="l1",
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+        )
+        l2_3d, l2_2d = build_embedding_variant(
+            texts,
+            loss_type="l2",
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+        )
 
     def build_points_3d(coords):
         items = []

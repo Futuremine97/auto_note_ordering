@@ -111,6 +111,9 @@ class EmbeddingRequest(BaseModel):
     dim: Optional[int] = 128
     limit: Optional[int] = None
     loss: Optional[str] = None
+    epochs: Optional[int] = None
+    batch_size: Optional[int] = None
+    learning_rate: Optional[float] = None
 
 
 class EmbeddingPoint(BaseModel):
@@ -148,6 +151,11 @@ class EmbeddingCompareResponse(BaseModel):
     total: int
     l1: EmbeddingVariant
     l2: EmbeddingVariant
+
+
+class EmbeddingJobStatus(BaseModel):
+    status: str
+    detail: Optional[str] = None
 
 
 class LlmMessage(BaseModel):
