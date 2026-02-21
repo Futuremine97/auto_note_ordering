@@ -136,3 +136,9 @@ LLM_MODEL=YOUR_MODEL
 ## Security Notes
 - Do not commit `.env` or API keys to a public repo.
 - Revoke any tokens that were pasted into chats or logs.
+- Uploaded images are encrypted at rest when `FILE_ENC_MASTER_KEY` is set (AES-CTR + HMAC). Set `FILE_ENC_ALLOW_PLAINTEXT=true` only for one-time migration, then disable it.
+
+Migration for existing uploads:
+1. Set `FILE_ENC_MASTER_KEY` in `.env`.
+2. Run `python backend/scripts/encrypt_uploads.py --dry-run` to preview.
+3. Run `python backend/scripts/encrypt_uploads.py` to encrypt files in place.

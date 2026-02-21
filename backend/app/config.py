@@ -58,6 +58,9 @@ AUTH_SECRET = os.getenv("AUTH_SECRET", "change-me")
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 AUTH_COOKIE_TTL_HOURS = int(os.getenv("AUTH_COOKIE_TTL_HOURS", "72"))
 
+FILE_ENC_MASTER_KEY = os.getenv("FILE_ENC_MASTER_KEY", "")
+FILE_ENC_ALLOW_PLAINTEXT = os.getenv("FILE_ENC_ALLOW_PLAINTEXT", "false").lower() == "true"
+
 EMBEDDING_MODEL_NAME = os.getenv(
     "EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small"
 )

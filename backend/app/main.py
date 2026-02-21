@@ -9,7 +9,7 @@ from typing import List, Optional, Union
 
 from fastapi import Depends, FastAPI, File, UploadFile, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from PIL import Image
 
@@ -66,6 +66,7 @@ from .embedding import (
 from .llm import build_ocr_context, build_image_payloads, call_llm
 from .auth import AUTH_COOKIE_NAME, create_auth_cookie, require_auth, verify_auth_cookie
 from .config import AUTH_COOKIE_SECURE, AUTH_COOKIE_TTL_HOURS, PHOTO_PASSWORD
+from .file_crypto import encrypt_file_in_place, read_decrypted_file
 from .stt import transcribe_audio
 from .tts import synthesize_speech
 
@@ -190,6 +191,10 @@ def upload_images(
         db.add(record)
         records.append(record)
 
+    # Encrypt files at rest after OCR completes.
+    for item in pending:
+        encrypt_file_in_place(item["stored_path"], item["stored_filename"])
+
     db.commit()
     for record in records:
         db.refresh(record)
@@ -226,7 +231,20 @@ def get_image_file(request: Request, image_id: int, db: Session = Depends(get_db
     if not path.exists():
         raise HTTPException(status_code=404, detail="File missing on disk")
 
-    return FileResponse(path)
+    data = read_decrypted_file(path, record.stored_filename)
+    media_type = _guess_media_type(path)
+    return Response(content=data, media_type=media_type)
+
+
+def _guess_media_type(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if ext == ".png":
+        return "image/png"
+    if ext == ".webp":
+        return "image/webp"
+    return "application/octet-stream"
 
 
 @app.post("/books", response_model=BookOut)

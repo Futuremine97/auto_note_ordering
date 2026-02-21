@@ -19,6 +19,7 @@ from .config import (
     LLM_IMAGE_MAX_BYTES,
     LLM_IMAGE_MAX_DIM,
 )
+from .file_crypto import read_decrypted_file
 
 
 def build_ocr_context(records: Iterable, max_chars: int | None = None) -> Tuple[str, int]:
@@ -79,7 +80,8 @@ def _encode_image_bytes(record) -> bytes:
     from .config import UPLOAD_DIR
 
     path = UPLOAD_DIR / record.stored_filename
-    image = Image.open(path)
+    data = read_decrypted_file(path, record.stored_filename)
+    image = Image.open(io.BytesIO(data))
     image = ImageOps.exif_transpose(image).convert("RGB")
     image = _resize_to_limit(image, LLM_IMAGE_MAX_DIM)
 
